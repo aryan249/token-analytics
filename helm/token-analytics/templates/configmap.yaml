@@ -4,8 +4,6 @@ metadata:
   name: {{ .Chart.Name }}-config
   namespace: {{ .Values.namespace }}
 data:
-  CHAIN_ID: {{ .Values.indexer.env.CHAIN_ID | quote }}
-  BATCH_SIZE: {{ .Values.indexer.env.BATCH_SIZE | quote }}
-  LOG_LEVEL: {{ .Values.api.env.LOG_LEVEL | quote }}
-  NODE_ENV: {{ .Values.api.env.NODE_ENV | quote }}
-  API_PORT: {{ .Values.api.env.API_PORT | quote }}
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
