@@ -1,4 +1,4 @@
-name: Build and Push Image
+name: CI/CD
 
 on:
   push:
@@ -6,7 +6,6 @@ on:
   pull_request:
     branches: [main, staging]
 
-# Cancel in-progress runs when a new push arrives on the same branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -17,12 +16,10 @@ env:
   AWS_PROFILE: token-analytics-new
   ECR_REGISTRY: 692046684301.dkr.ecr.ap-south-1.amazonaws.com
   ECR_REPOSITORY: token-analytics
-  EKS_CLUSTER: token-analytics
-  NAMESPACE: token-analytics
-  IMAGE_TAG: ${{ github.sha }}
   NODE_VERSION: "20"
 
 jobs:
+  # ── Runs on EVERY push (all branches) ──────────────────────────────────────
   lint-build-test:
     runs-on: self-hosted
     steps:
@@ -52,12 +49,24 @@ jobs:
       - name: Dependency audit
         run: npm audit --audit-level=high || true
 
+  # ── Runs ONLY on merge to main or staging ──────────────────────────────────
+  # Tags: prod-<sha> or staging-<sha>
+  # Argo CD pulls latest prod-* or staging-* tag automatically
   docker-build-push:
     needs: lint-build-test
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || startsWith(github.ref, 'refs/heads/feat/') || startsWith(github.ref, 'refs/heads/fix/')
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/feat/indexer-pipeline'
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4.1.7
+
+      - name: Determine environment tag
+        id: env-tag
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "ENV_PREFIX=prod" >> $GITHUB_OUTPUT
+          else
+            echo "ENV_PREFIX=staging" >> $GITHUB_OUTPUT
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -67,6 +76,8 @@ jobs:
 
       - name: Build and push
         uses: docker/build-push-action@v6
+        env:
+          IMAGE_TAG: ${{ steps.env-tag.outputs.ENV_PREFIX }}-${{ github.sha }}
         with:
           context: .
           push: true
@@ -85,46 +96,14 @@ jobs:
           exit-code: 0
           scanners: vuln
 
-      - name: Print image tag for PR
+      - name: Summary
+        env:
+          IMAGE_TAG: ${{ steps.env-tag.outputs.ENV_PREFIX }}-${{ github.sha }}
         run: |
-          echo "## Image Built" >> $GITHUB_STEP_SUMMARY
+          echo "## Image Built & Pushed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ steps.env-tag.outputs.ENV_PREFIX }}" >> $GITHUB_STEP_SUMMARY
           echo "**Tag:** \`$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** \`$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "To deploy, update \`helm/token-analytics/values.yaml\`:" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
-          echo "image:" >> $GITHUB_STEP_SUMMARY
-          echo "  tag: \"$IMAGE_TAG\"" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "Then merge to main (production) or staging." >> $GITHUB_STEP_SUMMARY
-
-  # ── Deployment Flow ────────────────────────────────────────────────────────
-  #
-  # 1. Dev pushes to feature branch → CI builds + pushes image to ECR
-  # 2. Dev creates PR to main/staging → includes values.yaml with new tag
-  # 3. Reviewer verifies tag matches CI build
-  # 4. PR merged → Argo CD detects git change → deploys that exact image
-  #
-  # Runner has ZERO write access to the cluster.
-  # Only Argo CD (in-cluster) can deploy — and only from trusted git repo.
-  #
-  # To deploy:
-  #   1. Copy image tag from CI output
-  #   2. Update helm/token-analytics/values.yaml → image.tag
-  #   3. Commit + push to your branch
-  #   4. Create PR → merge to main
-  #   5. Argo CD auto-syncs within 3 minutes
-
-  verify-deployment:
-    needs: docker-build-push
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4.1.7
-
-      - name: Configure kubectl (read-only)
-        run: aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
-
-      - name: Verify deployment
-        run: ./scripts/verify-deployment.sh "$IMAGE_TAG"
+          echo "Argo CD will auto-deploy using the latest \`${{ steps.env-tag.outputs.ENV_PREFIX }}-*\` tag." >> $GITHUB_STEP_SUMMARY

@@ -33,6 +33,13 @@ metadata:
   labels:
     app.kubernetes.io/part-of: token-analytics
     environment: production
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: app=692046684301.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
+    argocd-image-updater.argoproj.io/app.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/app.allow-tags: "regexp:^prod-"
+    argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
 spec:
   project: token-analytics
   source:
@@ -74,6 +81,13 @@ metadata:
   labels:
     app.kubernetes.io/part-of: token-analytics
     environment: staging
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: app=692046684301.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
+    argocd-image-updater.argoproj.io/app.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/app.allow-tags: "regexp:^staging-"
+    argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
 spec:
   project: token-analytics
   source:
