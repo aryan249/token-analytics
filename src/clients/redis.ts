@@ -22,13 +22,18 @@ export const KEYS = {
   // API response cache (invalidated by processors on write)
   apiTokenList: ()                                        => "api:tokens:list",
   apiCandles:   (tokenAddress: string, resolution: string) => `api:candles:${tokenAddress.toLowerCase()}:${resolution}`,
-  apiPositions: (walletAddress: string)                   => `api:positions:${walletAddress.toLowerCase()}`,
-  apiRoyalties: (walletAddress: string)                   => `api:royalties:${walletAddress.toLowerCase()}`,
+  apiPositions:   (walletAddress: string)                   => `api:positions:${walletAddress.toLowerCase()}`,
+  apiRoyalties:   (walletAddress: string)                   => `api:royalties:${walletAddress.toLowerCase()}`,
+  apiActivity:    (walletAddress: string)                   => `api:activity:${walletAddress.toLowerCase()}`,
+  apiTokenDetail: (tokenAddress: string)                    => `api:token:${tokenAddress.toLowerCase()}`,
+  apiTrades:      (tokenAddress: string, offset: number)    => `api:trades:${tokenAddress.toLowerCase()}:${offset}`,
+  apiHolders:     (tokenAddress: string, offset: number)    => `api:holders:${tokenAddress.toLowerCase()}:${offset}`,
+  apiStats:       ()                                        => "api:stats",
 } as const;
 
 export const TTL = {
   tokenState:  60,
-  ethUsdRate:  300,
+  ethUsdRate:  3600,
   candleTip:   60,
   walletState: 120,
 } as const;
@@ -36,10 +41,11 @@ export const TTL = {
 // ── Event channels (indexer → processors) ────────────────────────────────────
 
 export const EVENT_CHANNELS = {
-  swap: "events:swap",   // PoolSwap            → trade + position + candle
-  fees: "events:fees",   // PoolFeesDistributed → fee processor
-  meta: "events:meta",   // PoolCreated         → token processor
-  price: "events:price",  // ChainlinkAnswerUpdated → price processor
+  swap:     "events:swap",      // PoolSwap + PoolStateUpdated → trade + candle
+  fees:     "events:fees",      // PoolFeesDistributed   → fee processor
+  meta:     "events:meta",      // PoolCreated           → token processor
+  price:    "events:price",     // ChainlinkAnswerUpdated → price processor
+  transfer: "events:transfer",  // ERC20Transfer         → holder balances
 } as const;
 
 export type EventChannel = (typeof EVENT_CHANNELS)[keyof typeof EVENT_CHANNELS];
@@ -47,9 +53,11 @@ export type EventChannel = (typeof EVENT_CHANNELS)[keyof typeof EVENT_CHANNELS];
 // ── UI push channels (processors → WebSocket gateway) ────────────────────────
 
 export const CHANNELS = {
-  tokenUpdate:  (tokenAddress: string)                    => `updates:${tokenAddress.toLowerCase()}`,
-  candleUpdate: (tokenAddress: string, resolution: string) => `candles:${resolution}:${tokenAddress.toLowerCase()}`,
-  walletUpdate: (walletAddress: string)                   => `wallet:${walletAddress.toLowerCase()}`,
+  tokenUpdate:       (tokenAddress: string)                     => `updates:${tokenAddress.toLowerCase()}`,
+  candleUpdate:      (tokenAddress: string, resolution: string) => `candles:${resolution}:${tokenAddress.toLowerCase()}`,
+  walletUpdate:      (walletAddress: string)                    => `wallet:${walletAddress.toLowerCase()}`,
+  coinFeeUpdate:     (tokenAddress: string)                     => `fees:coin:${tokenAddress.toLowerCase()}`,
+  protocolFeeUpdate: ()                                         => "fees:protocol",
 } as const;
 
 export async function setTokenState(client: RedisClient, tokenAddress: string, state: object): Promise<void> {
@@ -88,4 +96,12 @@ export async function publishCandleUpdate(client: RedisClient, tokenAddress: str
 
 export async function publishWalletUpdate(client: RedisClient, walletAddress: string, payload: object): Promise<void> {
   await client.publish(CHANNELS.walletUpdate(walletAddress), JSON.stringify(payload));
+}
+
+export async function publishCoinFeeUpdate(client: RedisClient, tokenAddress: string, payload: object): Promise<void> {
+  await client.publish(CHANNELS.coinFeeUpdate(tokenAddress), JSON.stringify(payload));
+}
+
+export async function publishProtocolFeeUpdate(client: RedisClient, payload: object): Promise<void> {
+  await client.publish(CHANNELS.protocolFeeUpdate(), JSON.stringify(payload));
 }
