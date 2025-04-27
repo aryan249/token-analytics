@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - 'terraform/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'terraform/**'
   workflow_dispatch:
     inputs:
       action:
@@ -23,13 +27,14 @@ env:
   ROLE_ARN: arn:aws:iam::692046684301:role/token-analytics-github-terraform-role
 
 jobs:
-  terraform:
+  # ── Plan: runs on every push and PR ──────────────────────────────────────────
+  plan:
     runs-on: self-hosted
     defaults:
       run:
         working-directory: ${{ env.TF_WORKING_DIR }}
     permissions:
-      id-token: write   # Required for OIDC token
+      id-token: write
       contents: read
       pull-requests: write
 
@@ -82,11 +87,55 @@ jobs:
               body: `### Terraform Plan\n\`\`\`\n${truncated}\n\`\`\``
             });
 
+      - name: Upload plan artifact
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
+          retention-days: 1
+
+  # ── Apply: requires approval via GitHub Environment ──────────────────────────
+  # Set up a "production" environment in GitHub repo settings with required reviewers.
+  # Without it, apply runs automatically (same as before, but now easy to gate).
+  apply:
+    needs: plan
+    if: |
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
+    runs-on: self-hosted
+    environment: production
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.0
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Fetch secrets from AWS Secrets Manager
+        run: |
+          SECRETS=$(aws secretsmanager get-secret-value --secret-id token-analytics/app-secrets --query SecretString --output text)
+          echo "TF_VAR_alchemy_ws_url=$(echo $SECRETS | jq -r .ALCHEMY_WS_URL)" >> $GITHUB_ENV
+          echo "TF_VAR_jwt_secret=$(echo $SECRETS | jq -r .JWT_SECRET)" >> $GITHUB_ENV
+
       - name: Terraform Apply
-        if: |
-          (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -auto-approve
         env:
           TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
           TF_VAR_github_runner_token: ${{ secrets.RUNNER_TOKEN }}

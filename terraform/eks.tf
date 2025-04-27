@@ -71,7 +71,7 @@ resource "aws_eks_node_group" "workers" {
   ]
 }
 
-# ── EKS Access: allow runner role to manage the cluster ──────────────────────
+# ── EKS Access: runner gets read-only view (Argo CD handles deploys) ────────
 
 resource "aws_eks_access_entry" "runner" {
   cluster_name  = aws_eks_cluster.main.name
@@ -79,10 +79,10 @@ resource "aws_eks_access_entry" "runner" {
   type          = "STANDARD"
 }
 
-resource "aws_eks_access_policy_association" "runner_admin" {
+resource "aws_eks_access_policy_association" "runner_view" {
   cluster_name  = aws_eks_cluster.main.name
   principal_arn = aws_iam_role.runner.arn
-  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy"
 
   access_scope {
     type = "cluster"

@@ -90,9 +90,15 @@ resource "aws_iam_role_policy" "github_actions_ecr" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid      = "ECRAuth"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "ECRPush"
         Effect = "Allow"
         Action = [
-          "ecr:GetAuthorizationToken",
           "ecr:BatchCheckLayerAvailability",
           "ecr:GetDownloadUrlForLayer",
           "ecr:BatchGetImage",
@@ -101,9 +107,10 @@ resource "aws_iam_role_policy" "github_actions_ecr" {
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
         ]
-        Resource = "*"
+        Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.project}"
       },
       {
+        Sid      = "EKSDescribe"
         Effect   = "Allow"
         Action   = ["eks:DescribeCluster"]
         Resource = "arn:aws:eks:${var.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/${var.project}"
@@ -194,16 +201,37 @@ resource "aws_iam_role_policy" "github_terraform" {
         Resource = "*"
       },
       {
-        Sid      = "IAM"
-        Effect   = "Allow"
-        Action   = ["iam:*"]
-        Resource = "*"
+        Sid    = "IAM"
+        Effect = "Allow"
+        Action = [
+          "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:UpdateRole",
+          "iam:TagRole", "iam:UntagRole", "iam:ListRoleTags",
+          "iam:PutRolePolicy", "iam:GetRolePolicy", "iam:DeleteRolePolicy", "iam:ListRolePolicies",
+          "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:ListAttachedRolePolicies",
+          "iam:CreatePolicy", "iam:DeletePolicy", "iam:GetPolicy", "iam:ListPolicyVersions",
+          "iam:GetPolicyVersion", "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
+          "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile", "iam:GetInstanceProfile",
+          "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile",
+          "iam:CreateOpenIDConnectProvider", "iam:DeleteOpenIDConnectProvider",
+          "iam:GetOpenIDConnectProvider", "iam:TagOpenIDConnectProvider",
+          "iam:ListOpenIDConnectProviders",
+          "iam:PassRole",
+        ]
+        Resource = [
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project}-*",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.project}-*",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${var.project}-*",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/*",
+        ]
       },
       {
-        Sid      = "ECR"
-        Effect   = "Allow"
-        Action   = ["ecr:*"]
-        Resource = "*"
+        Sid    = "ECR"
+        Effect = "Allow"
+        Action = ["ecr:*"]
+        Resource = [
+          "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.project}",
+          "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.project}-*",
+        ]
       },
       {
         Sid      = "CloudWatch"
@@ -260,38 +288,8 @@ resource "aws_iam_role_policy" "runner_eks" {
   })
 }
 
-resource "aws_iam_role_policy" "runner_tfstate" {
-  name = "terraform-state"
-  role = aws_iam_role.runner.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:DeleteObject",
-          "s3:ListBucket",
-        ]
-        Resource = [
-          "arn:aws:s3:::token-analytics-tfstate",
-          "arn:aws:s3:::token-analytics-tfstate/*",
-        ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "dynamodb:GetItem",
-          "dynamodb:PutItem",
-          "dynamodb:DeleteItem",
-        ]
-        Resource = "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/terraform-locks"
-      }
-    ]
-  })
-}
+# Runner no longer needs terraform state access — infra pipeline uses its own
+# OIDC role (github_terraform) for state operations.
 
 resource "aws_iam_instance_profile" "runner" {
   name = "${var.project}-runner-profile"

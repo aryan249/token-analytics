@@ -49,7 +49,7 @@ ecr_keep_images    = 10
 # Runner
 runner_instance_type        = "t3.small"
 runner_volume_size          = 30
-runner_ssh_cidr             = "0.0.0.0/0"
+runner_ssh_cidr             = "10.0.0.0/16" # VPC-only access (no public SSH)
 runner_disk_alert_threshold = 85
 
 # GitHub
