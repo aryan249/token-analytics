@@ -60,6 +60,138 @@ This document explains every component, why it exists, and how they connect.
 
 ---
 
+## 1b. Complete Data Flow (Single Region)
+
+```
+                         Base L2 Blockchain
+                                │
+                     Alchemy WebSocket (wss://)
+                                │
+                    ┌───────────▼────────────┐
+                    │   SCANNER (1 pod)      │
+                    │                        │
+                    │  watchBlocks (live)     │──→ blocks processed IMMEDIATELY
+                    │  catchUp (10 parallel) │    (no confirmation depth delay)
+                    │  2-pass decode         │    reorg handled by parent hash check
+                    │  reorg detection       │
+                    └───────────┬────────────┘
+                                │
+          ┌─────────────────────▼─────────────────────────┐
+          │        publishToChannels (pipelined batch)     │
+          │        redis.multi() → N xAdds → exec()       │
+          │        = 1 round trip for all events           │
+          │                                                │
+          │  Event Streams          │  Fast-path UI        │
+          │  (consumer groups       │  (Pub/Sub broadcast  │
+          │   split work)           │   to all pods)       │
+          ├────────────────────────┤                       │
+          │                        │                       │
+          │  stream:swap ─────┐    │  pubsub:ui:candles ──┐│
+          │  stream:fees ───┐ │    │  pubsub:ui:meta ────┐││
+          │  stream:meta ─┐ │ │    │                     │││
+          │  stream:price  │ │ │    │                     │││
+          │  stream:xfer   │ │ │    └─────────────────────┘││
+          └────────────────┘ │ │                           ││
+                             │ │                           ││
+               ┌─────────────▼─▼──────────────┐           ││
+               │      PROCESSORS (6 pods)      │           ││
+               │                               │           ││
+               │  Trade  → trades table ───────│──→ pubsub:ui:trades
+               │  Candle → Redis Lua OHLCV ────│──→ pubsub:ui:candles
+               │          + PG batch (1 query) │           ││
+               │  Token  → token_registry ─────│──→ pubsub:ui:meta
+               │  Fees   → fee_distributions ──│──→ pubsub:ui:fees
+               │  Position → holder_balances   │           ││
+               │  Price  → Redis ETH/USD ──────│──→ pubsub:ui:rate
+               └───────────────────────────────┘           ││
+                                                           ││
+               ┌───────────────────────────────────────────▼▼──┐
+               │     API + WS GATEWAY (2-6 pods, HPA)          │
+               │                                                │
+               │  Pub/Sub subscribers (every pod gets ALL msgs) │
+               │  → broadcast to connected WebSocket clients    │
+               │                                                │
+               │  REST API with Redis cache (5-30s TTL)         │
+               │  → stampede lock prevents thundering herd      │
+               │                                                │
+               │  GET /metrics → Prometheus scraping             │
+               └────────────────┬───────────────────────────────┘
+                                │
+                         ┌──────▼──────┐
+                         │     ALB     │  sticky sessions (app cookie)
+                         └──────┬──────┘
+                                │
+                            INTERNET
+                         (browsers, bots)
+```
+
+## 1c. Multi-Region Architecture
+
+```
+When REDIS_REPLICA_URLS is configured, the scanner fans out to all regions:
+
+                         Base Blockchain
+                               │
+                    ┌──────────▼──────────┐
+                    │   SCANNER (US-East)  │
+                    │                      │
+                    │  publishToChannels() │
+                    │  Promise.all([       │
+                    │    pipeline(US),      │─── 1 pipeline per region
+                    │    pipeline(EU),      │    all in parallel
+                    │    pipeline(AP),      │
+                    │  ])                   │
+                    └──────┬───┬───┬───────┘
+                           │   │   │
+              ┌────────────┘   │   └────────────┐
+              ▼                ▼                 ▼
+     ┌────────────────┐ ┌────────────────┐ ┌────────────────┐
+     │  Redis (US)    │ │  Redis (EU)    │ │  Redis (AP)    │
+     │  - Streams     │ │  - Streams     │ │  - Streams     │
+     │  - Pub/Sub     │ │  - Pub/Sub     │ │  - Pub/Sub     │
+     │  - Cache       │ │  - Cache       │ │  - Cache       │
+     └───────┬────────┘ └───────┬────────┘ └───────┬────────┘
+             │                  │                   │
+     ┌───────▼────────┐ ┌──────▼─────────┐ ┌──────▼─────────┐
+     │ US Processors  │ │ EU Processors  │ │ AP Processors  │
+     │ US API Pods    │ │ EU API Pods    │ │ AP API Pods    │
+     │ US Postgres    │ │ EU Postgres    │ │ AP Postgres    │
+     └────────────────┘ └────────────────┘ └────────────────┘
+
+Each region:
+  - Processors read from LOCAL Redis (no cross-region latency)
+  - API pods read from LOCAL Redis cache + LOCAL Postgres
+  - Scanner publishes to ALL regions in 1 batched pipeline per region
+  - Latency: max(US_redis, EU_redis, AP_redis) ≈ 80ms (parallel, not additive)
+```
+
+## 1d. Event Processing Guarantees
+
+```
+Event lifecycle:
+
+  Scanner decodes event
+    │
+    ├─ xAdd to Redis stream ─── publish ledger recorded in Postgres
+    │                            (block_number, stream, event_count, stream_ids)
+    │
+    ├─ Processor xReadGroup picks up event
+    │   ├─ handle() succeeds → xAck (removed from pending list)
+    │   ├─ handle() fails   → 3 retries with backoff (1s, 2s, 3s)
+    │   ├─ still fails      → left unacked in pending list
+    │   ├─ claim loop       → reclaims after 30s idle
+    │   └─ 5+ failures      → persisted to dead_letter_queue → xAck
+    │
+    └─ On scanner restart:
+        verifyAndReplayGaps()
+          → reads publish_ledger for last 100 blocks
+          → spot-checks stream IDs in Redis (xRange)
+          → re-fetches + re-publishes missing blocks from blockchain
+          → safe because all DB writes are idempotent (ON CONFLICT)
+```
+
+---
+
 ## 2. Terraform Infrastructure
 
 Everything in `terraform/` — 12 files creating AWS resources.
