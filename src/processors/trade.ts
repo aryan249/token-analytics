@@ -12,11 +12,14 @@ const ZERO = "0x0000000000000000000000000000000000000000";
 const TRANSFER_GROUP = "trade-transfer-reader";
 
 
+const MAKER_CACHE_KEY = "cache:tx-makers";        // Redis HASH: txHash → JSON({from, to})
+const MAKER_CACHE_TTL = 86400;                     // 24h
+const PENDING_POOL_KEY = "cache:pending-pool-state"; // Redis HASH: poolId → JSON(event)
+
 class TradeProcessor extends BaseProcessor {
   get channel() { return EVENT_CHANNELS.swap; }
   get groupName() { return "trade-processor"; }
 
-  private readonly makerCache = new Map<string, { from: string; to: string }>();
   private readonly pendingPoolState = new Map<string, PoolStateUpdatedEvent>();
 
   private transferReader!: RedisClient;
@@ -30,6 +33,17 @@ class TradeProcessor extends BaseProcessor {
     } catch (err: any) {
       if (!err?.message?.includes("BUSYGROUP")) throw err;
     }
+
+    // Restore pendingPoolState from Redis on startup
+    try {
+      const entries = await this.publisher.hGetAll(PENDING_POOL_KEY);
+      for (const [poolId, raw] of Object.entries(entries)) {
+        this.pendingPoolState.set(poolId, JSON.parse(raw, bigIntReviver));
+      }
+      if (this.pendingPoolState.size > 0) {
+        logger.info({ count: this.pendingPoolState.size }, "Restored pending pool state from Redis");
+      }
+    } catch (err) { logger.warn({ err }, "Could not restore pending pool state"); }
 
     // Periodically flush buffered PoolStateUpdated events
     setInterval(() => {
@@ -55,17 +69,18 @@ class TradeProcessor extends BaseProcessor {
               const from = e.from.toLowerCase();
               const to   = e.to.toLowerCase();
               if (from !== ZERO && to !== ZERO) {
-                this.makerCache.set(e.transactionHash.toLowerCase(), { from, to });
-                if (this.makerCache.size > 2000) {
-                  this.makerCache.delete(this.makerCache.keys().next().value!);
-                }
+                // Persist to Redis HASH — survives pod restart
+                await this.publisher.hSet(MAKER_CACHE_KEY, e.transactionHash.toLowerCase(), JSON.stringify({ from, to }));
               }
             }
-          } catch (err) { logger.debug({ err }, "Ignored error"); }
+          } catch (err) { logger.warn({ err, stream, messageId: id }, "Transfer parse error"); }
           await this.transferReader.xAck(stream, TRANSFER_GROUP, id);
         }
       }
-    } catch (err) { logger.debug({ err }, "Non-fatal error"); }
+      // Set TTL on the hash if it doesn't have one (idempotent)
+      const ttl = await this.publisher.ttl(MAKER_CACHE_KEY);
+      if (ttl < 0) await this.publisher.expire(MAKER_CACHE_KEY, MAKER_CACHE_TTL);
+    } catch (err) { logger.warn({ err }, "Transfer drain error"); }
   }
 
   private async applyPoolState(e: PoolStateUpdatedEvent): Promise<boolean> {
@@ -104,6 +119,7 @@ class TradeProcessor extends BaseProcessor {
     for (const [poolId, e] of this.pendingPoolState) {
       if (await this.applyPoolState(e)) {
         this.pendingPoolState.delete(poolId);
+        await this.publisher.hDel(PENDING_POOL_KEY, poolId).catch(() => {});
         logger.info({ poolId }, "Flushed buffered PoolStateUpdated");
       }
     }
@@ -119,10 +135,14 @@ class TradeProcessor extends BaseProcessor {
       const applied = await this.applyPoolState(e);
       if (!applied) {
         // Token not registered yet (race with token processor) — buffer for retry
-        this.pendingPoolState.set(e.poolId.toLowerCase(), e);
+        const poolId = e.poolId.toLowerCase();
+        this.pendingPoolState.set(poolId, e);
+        // Persist to Redis so it survives pod restart
+        await this.publisher.hSet(PENDING_POOL_KEY, poolId, JSON.stringify(e, (_k, v) => typeof v === "bigint" ? v.toString() + "n" : v)).catch(() => {});
         if (this.pendingPoolState.size > 500) {
-          // Evict oldest
-          this.pendingPoolState.delete(this.pendingPoolState.keys().next().value!);
+          const oldest = this.pendingPoolState.keys().next().value!;
+          this.pendingPoolState.delete(oldest);
+          await this.publisher.hDel(PENDING_POOL_KEY, oldest).catch(() => {});
         }
         logger.debug({ poolId: e.poolId }, "PoolStateUpdated buffered — token not yet registered");
       }
@@ -133,11 +153,12 @@ class TradeProcessor extends BaseProcessor {
     const e = event as PoolSwapEvent;
     if (!e.tokenAddress) return;
 
-    // Drain pending transfers so makerCache is populated before we look up
+    // Drain pending transfers so maker cache is populated before we look up
     await this.drainTransfers();
 
-    const txKey     = e.transactionHash.toLowerCase();
-    const makerEntry = this.makerCache.get(txKey);
+    const txKey = e.transactionHash.toLowerCase();
+    const makerRaw = await this.publisher.hGet(MAKER_CACHE_KEY, txKey);
+    const makerEntry: { from: string; to: string } | null = makerRaw ? JSON.parse(makerRaw) : null;
     const maker = makerEntry
       ? (e.isBuy ? makerEntry.to : makerEntry.from)
       : null;
@@ -167,36 +188,50 @@ class TradeProcessor extends BaseProcessor {
                 : e.flAmount0  !== 0n ? "fl"
                 : "swap";
 
-    await insertTrade(this.pool, {
-      id:             e.id,
-      blockNumber:    e.blockNumber,
-      blockHash:      e.blockHash,
-      blockTimestamp: e.blockTimestamp,
-      txHash:         e.transactionHash,
-      tokenAddress:   e.tokenAddress,
-      poolId:         e.poolId,
-      amount0Eth:     e.totalAmount0,
-      amount1Tokens:  e.totalAmount1,
-      priceEth:       e.priceEth,
-      priceUsd,
-      feeEth:         e.totalFee0,
-      phase,
-      isBuy:          e.isBuy,
-      chainId:        e.chainId,
-    });
-
-    // Backfill sender/recipient on the trade row for REST API
-    if (maker) {
-      await this.pool.query(
-        `UPDATE trades SET
-           sender    = CASE WHEN is_buy = false THEN $2 ELSE sender    END,
-           recipient = CASE WHEN is_buy = true  THEN $2 ELSE recipient END
-         WHERE id = $1`,
-        [e.id, maker]
-      );
+    // Transaction: INSERT trade + backfill sender/recipient atomically
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await insertTrade(client as any, {
+        id:             e.id,
+        blockNumber:    e.blockNumber,
+        blockHash:      e.blockHash,
+        blockTimestamp: e.blockTimestamp,
+        txHash:         e.transactionHash,
+        tokenAddress:   e.tokenAddress,
+        poolId:         e.poolId,
+        amount0Eth:     e.totalAmount0,
+        amount1Tokens:  e.totalAmount1,
+        priceEth:       e.priceEth,
+        priceUsd,
+        feeEth:         e.totalFee0,
+        phase,
+        isBuy:          e.isBuy,
+        chainId:        e.chainId,
+      });
+      if (maker) {
+        await client.query(
+          `UPDATE trades SET
+             sender    = CASE WHEN is_buy = false THEN $2 ELSE sender    END,
+             recipient = CASE WHEN is_buy = true  THEN $2 ELSE recipient END
+           WHERE id = $1`,
+          [e.id, maker]
+        );
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
     }
 
-    await invalidate(this.publisher, KEYS.apiTokenList());
+    // Invalidate per-token caches — NOT the entire list (list has 5s TTL, refreshes naturally)
+    await Promise.all([
+      invalidate(this.publisher, KEYS.apiTokenDetail(e.tokenAddress)),
+      invalidate(this.publisher, KEYS.tokenPrice(e.tokenAddress)),
+      invalidate(this.publisher, KEYS.tokenVolume(e.tokenAddress)),
+    ]);
     await publishTokenUpdate(this.publisher, e.tokenAddress, {
       type:           "trade",
       id:             e.id,
