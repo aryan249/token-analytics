@@ -32,10 +32,10 @@
 variable "peer_regions" {
   description = "List of peer regions for VPC peering. Each entry creates a peering connection."
   type = list(object({
-    region          = string  # e.g. "eu-west-1"
-    vpc_id          = string  # VPC ID in the peer region
-    vpc_cidr        = string  # CIDR of the peer VPC (e.g. "10.1.0.0/16")
-    account_id      = string  # AWS account ID (same or cross-account)
+    region     = string # e.g. "eu-west-1"
+    vpc_id     = string # VPC ID in the peer region
+    vpc_cidr   = string # CIDR of the peer VPC (e.g. "10.1.0.0/16")
+    account_id = string # AWS account ID (same or cross-account)
   }))
   default = []
 }
@@ -45,9 +45,9 @@ variable "peer_regions" {
 resource "aws_vpc_peering_connection" "peer" {
   count = length(var.peer_regions)
 
-  vpc_id      = aws_vpc.main.id
-  peer_vpc_id = var.peer_regions[count.index].vpc_id
-  peer_region = var.peer_regions[count.index].region
+  vpc_id        = aws_vpc.main.id
+  peer_vpc_id   = var.peer_regions[count.index].vpc_id
+  peer_region   = var.peer_regions[count.index].region
   peer_owner_id = var.peer_regions[count.index].account_id
 
   tags = {
