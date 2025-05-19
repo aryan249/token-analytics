@@ -52,12 +52,10 @@ spec:
             namespace: token-analytics-staging
             branch: staging
             valuesFile: values-staging.yaml
-            autoSync: true
           - env: production
             namespace: token-analytics
             branch: main
             valuesFile: values-production.yaml
-            autoSync: true
   template:
     metadata:
       name: "token-analytics-{{env}}"
