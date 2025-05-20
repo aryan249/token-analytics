@@ -151,12 +151,12 @@ variable "rds_multi_az" {
 
 variable "rds_backup_window" {
   type    = string
-  default = "03:00-04:00"
+  default = "22:00-23:00"
 }
 
 variable "rds_maintenance_window" {
   type    = string
-  default = "sun:04:00-sun:05:00"
+  default = "wed:03:00-wed:04:00"
 }
 
 # ── ElastiCache Extra ────────────────────────────────────────────────────────
@@ -168,12 +168,12 @@ variable "redis_engine_version" {
 
 variable "redis_snapshot_window" {
   type    = string
-  default = "04:00-05:00"
+  default = "22:30-23:30"
 }
 
 variable "redis_maintenance_window" {
   type    = string
-  default = "sun:05:00-sun:06:00"
+  default = "wed:04:00-wed:05:00"
 }
 
 # ── EKS Extra ────────────────────────────────────────────────────────────────
