@@ -64,14 +64,21 @@ export async function upsertRoyaltyMembers(
   tokenAddress: string,
   members:      Array<{ recipient: string; share: bigint }>,
 ): Promise<void> {
-  for (const m of members) {
-    await pool.query(
-      `INSERT INTO royalty_members (token_address, recipient, share)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (token_address, recipient) DO UPDATE SET share = $3`,
-      [tokenAddress.toLowerCase(), m.recipient.toLowerCase(), m.share.toString()]
-    );
+  if (!members.length) return;
+  const addr = tokenAddress.toLowerCase();
+  const values: unknown[] = [];
+  const placeholders: string[] = [];
+  for (let i = 0; i < members.length; i++) {
+    const off = i * 3;
+    placeholders.push(`($${off + 1}, $${off + 2}, $${off + 3})`);
+    values.push(addr, members[i].recipient.toLowerCase(), members[i].share.toString());
   }
+  await pool.query(
+    `INSERT INTO royalty_members (token_address, recipient, share)
+     VALUES ${placeholders.join(", ")}
+     ON CONFLICT (token_address, recipient) DO UPDATE SET share = EXCLUDED.share`,
+    values,
+  );
 }
 
 // ── API read queries ──────────────────────────────────────────────────────────
@@ -449,25 +456,47 @@ export async function getTokenTrades(
   return { trades, total };
 }
 
+const DEFAULT_BAR_COUNT = 300;
+
 export async function getTokenCandles(
   pool:       Pool,
   address:    string,
   resolution: string,
+  from?:      bigint,
+  to?:        bigint,
+  limit?:     number,
 ): Promise<Array<{
   bucketTime: string; openEth: string; highEth: string;
   lowEth: string; closeEth: string; volumeEth: string; tradeCount: number;
 }>> {
+  const params: string[] = [address.toLowerCase(), resolution];
+  let where = `WHERE token_address = $1 AND resolution = $2`;
+
+  if (from != null) {
+    params.push(from.toString());
+    where += ` AND bucket_time >= $${params.length}`;
+  }
+  if (to != null) {
+    params.push(to.toString());
+    where += ` AND bucket_time <= $${params.length}`;
+  }
+
+  const cap = Math.min(limit ?? DEFAULT_BAR_COUNT, 1000);
+
+  // Fetch most recent `cap` candles, then return in ascending order
   const res = await pool.query<{
     bucket_time: string; open_eth: string; high_eth: string;
     low_eth: string; close_eth: string; volume_eth: string; trade_count: number;
   }>(
     `SELECT bucket_time::text, open_eth::text, high_eth::text,
             low_eth::text, close_eth::text, volume_eth::text, trade_count
-     FROM candles
-     WHERE token_address = $1
-       AND resolution    = $2
+     FROM (
+       SELECT * FROM candles ${where}
+       ORDER BY bucket_time DESC
+       LIMIT ${cap}
+     ) sub
      ORDER BY bucket_time ASC`,
-    [address.toLowerCase(), resolution]
+    params
   );
   return res.rows.map((r) => ({
     bucketTime: r.bucket_time, openEth:  r.open_eth,  highEth:   r.high_eth,
