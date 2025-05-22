@@ -19,6 +19,14 @@ export const userRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     if (wallet && !ADDR_RE.test(wallet.toLowerCase())) {
       return reply.status(400).send({ error: "Invalid wallet address" });
     }
+    // Verify JWT wallet matches the requested wallet — users can only access their own data
+    const authedWallet = (req as any).wallet;
+    if (!authedWallet) {
+      return reply.status(401).send({ error: "Authentication required" });
+    }
+    if (wallet && authedWallet.toLowerCase() !== wallet.toLowerCase()) {
+      return reply.status(403).send({ error: "Cannot access another wallet's data" });
+    }
   });
 
   // ── GET /users/:wallet/positions ──────────────────────────────────────────────
