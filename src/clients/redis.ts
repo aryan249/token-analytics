@@ -1,5 +1,6 @@
 import { createClient, type RedisClientType } from "redis";
 import { logger } from "../utils/logger";
+import { ALL_RESOLUTIONS } from "../utils/constants";
 
 export type RedisClient = RedisClientType;
 
@@ -13,10 +14,16 @@ export async function makeRedisClient(url: string): Promise<RedisClient> {
 }
 
 export const KEYS = {
+  // Processor-side state blobs
   tokenState:  (tokenAddress: string)                     => `token:${tokenAddress.toLowerCase()}`,
   ethUsdRate:  ()                                         => "chainlink:eth_usd",
   candleTip:   (tokenAddress: string, resolution: string) => `candle:${tokenAddress.toLowerCase()}:${resolution}`,
   walletState: (walletAddress: string)                    => `wallet:${walletAddress.toLowerCase()}`,
+  // API response cache (invalidated by processors on write)
+  apiTokenList: ()                                        => "api:tokens:list",
+  apiCandles:   (tokenAddress: string, resolution: string) => `api:candles:${tokenAddress.toLowerCase()}:${resolution}`,
+  apiPositions: (walletAddress: string)                   => `api:positions:${walletAddress.toLowerCase()}`,
+  apiRoyalties: (walletAddress: string)                   => `api:royalties:${walletAddress.toLowerCase()}`,
 } as const;
 
 export const TTL = {
@@ -67,8 +74,8 @@ export async function setWalletState(client: RedisClient, walletAddress: string,
 }
 
 export async function flushTokenCache(client: RedisClient, tokenAddress: string): Promise<void> {
-  const keys = [KEYS.tokenState(tokenAddress), ...["1m","15m","1h","4h","1d"].map((r) => KEYS.candleTip(tokenAddress, r))];
-  if (keys.length > 0) await client.del(keys);
+  const keys = [KEYS.tokenState(tokenAddress), ...ALL_RESOLUTIONS.map((r) => KEYS.candleTip(tokenAddress, r))];
+  await client.del(keys);
 }
 
 export async function publishTokenUpdate(client: RedisClient, tokenAddress: string, payload: object): Promise<void> {
