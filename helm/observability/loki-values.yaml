@@ -1,9 +1,18 @@
-# Loki (log aggregation) — sized for t3.small nodes
-# Install: helm upgrade --install loki grafana/loki-stack \
+# Loki (single-binary mode) — lightweight log aggregation
+# Install: helm upgrade --install loki grafana/loki \
 #            -n monitoring --create-namespace -f helm/observability/loki-values.yaml
 
 loki:
-  enabled: true
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  limits_config:
+    retention_period: 72h
+
+singleBinary:
+  replicas: 1
   resources:
     requests:
       cpu: 50m
@@ -11,45 +20,15 @@ loki:
     limits:
       cpu: 250m
       memory: 256Mi
-  config:
-    # Short retention for free tier
-    table_manager:
-      retention_deletes_enabled: true
-      retention_period: 72h  # 3 days
-    limits_config:
-      ingestion_rate_mb: 4
-      ingestion_burst_size_mb: 6
-      max_streams_per_user: 10000
   persistence:
-    enabled: false  # emptyDir for free tier (logs lost on pod restart, but 3-day retention anyway)
+    enabled: false
 
-# Promtail — collects logs from all pods and ships to Loki
-promtail:
-  enabled: true
-  resources:
-    requests:
-      cpu: 25m
-      memory: 64Mi
-    limits:
-      cpu: 100m
-      memory: 128Mi
-  config:
-    clients:
-      - url: http://loki:3100/loki/api/v1/push
-    snippets:
-      # Parse Pino JSON logs from token-analytics pods
-      pipelineStages:
-        - docker: {}
-        - json:
-            expressions:
-              level: level
-              msg: msg
-              stream: stream
-              err: err
-        - labels:
-            level:
-            stream:
-
-# Grafana is deployed via kube-prometheus-stack, not here
-grafana:
+# Disable components not needed in single-binary mode
+gateway:
   enabled: false
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
