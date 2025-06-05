@@ -59,12 +59,20 @@ jobs:
             sleep 15
           done
 
-      - name: Build Docker image
+      - name: Build Docker image (with layer cache)
         run: |
           REGISTRY=207270671706.dkr.ecr.$AWS_REGION.amazonaws.com
           IMAGE=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker build -t $IMAGE .
-          docker tag $IMAGE $REGISTRY/$ECR_REPOSITORY:latest
+
+          # Use BuildKit with local cache — reuses layers from previous builds
+          DOCKER_BUILDKIT=1 docker build \
+            --cache-from $REGISTRY/$ECR_REPOSITORY:cache 2>/dev/null || true
+          DOCKER_BUILDKIT=1 docker build \
+            -t $IMAGE \
+            -t $REGISTRY/$ECR_REPOSITORY:latest \
+            -t $REGISTRY/$ECR_REPOSITORY:cache \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            .
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
       - name: Scan image for vulnerabilities
@@ -74,10 +82,12 @@ jobs:
           trivy image --exit-code 0 --severity HIGH,CRITICAL --no-progress $IMAGE
         continue-on-error: true
 
-      - name: Push Docker image
+      - name: Push Docker image + cache
         run: |
+          REGISTRY=207270671706.dkr.ecr.$AWS_REGION.amazonaws.com
           docker push $IMAGE
-          docker push $(echo $IMAGE | sed "s/:.*/:latest/")
+          docker push $REGISTRY/$ECR_REPOSITORY:latest
+          docker push $REGISTRY/$ECR_REPOSITORY:cache
 
       - name: Update Helm values with new image tag
         run: |
