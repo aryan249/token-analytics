@@ -11,20 +11,30 @@ import type { DecodedEvent, PoolCreatedEvent, ManagerInitializedFeeSplitEvent } 
 const rpcUrl = (process.env.ALCHEMY_WS_URL ?? "").replace(/^wss?:\/\//, "https://");
 const rpcClient = createPublicClient({ chain: base, transport: http(rpcUrl) });
 
+const MAX_RPC_RETRIES = 3;
+const RPC_RETRY_DELAY = 2000;
+
 async function fetchTokenMetadata(
   tokenAddress: Address,
 ): Promise<{ name: string | null; symbol: string | null; totalSupply: bigint | null }> {
-  try {
-    const [name, symbol, totalSupply] = await Promise.all([
-      rpcClient.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "name" }),
-      rpcClient.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" }),
-      rpcClient.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "totalSupply" }),
-    ]);
-    return { name: name as string, symbol: symbol as string, totalSupply: totalSupply as bigint };
-  } catch (err) {
-    logger.warn({ err, token: tokenAddress }, "Could not fetch token metadata");
-    return { name: null, symbol: null, totalSupply: null };
+  for (let attempt = 1; attempt <= MAX_RPC_RETRIES; attempt++) {
+    try {
+      const [name, symbol, totalSupply] = await Promise.all([
+        rpcClient.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "name" }),
+        rpcClient.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" }),
+        rpcClient.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "totalSupply" }),
+      ]);
+      return { name: name as string, symbol: symbol as string, totalSupply: totalSupply as bigint };
+    } catch (err) {
+      if (attempt === MAX_RPC_RETRIES) {
+        logger.warn({ err, token: tokenAddress, attempts: attempt }, "Could not fetch token metadata after retries");
+        return { name: null, symbol: null, totalSupply: null };
+      }
+      logger.debug({ token: tokenAddress, attempt }, "RPC retry for token metadata");
+      await new Promise((r) => setTimeout(r, RPC_RETRY_DELAY * attempt));
+    }
   }
+  return { name: null, symbol: null, totalSupply: null };
 }
 
 class TokenProcessor extends BaseProcessor {

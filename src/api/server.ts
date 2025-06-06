@@ -59,12 +59,12 @@ async function main(): Promise<void> {
   const app = Fastify({ logger: false });
 
   // Global error handler
-  app.setErrorHandler((err, req, reply) => {
+  app.setErrorHandler((err: any, req, reply) => {
     if (err.statusCode === 429) {
       return reply.status(429).send({ error: err.message });
     }
     logger.error({ err, url: req.url, method: req.method, requestId: req.id }, "Unhandled route error");
-    reply.status(err.statusCode ?? 500).send({ error: err.message ?? "Internal server error" });
+    return reply.status(err.statusCode ?? 500).send({ error: err.message ?? "Internal server error" });
   });
 
   // Request ID + logging
@@ -72,13 +72,14 @@ async function main(): Promise<void> {
     (req as any).requestId = req.id ?? crypto.randomUUID();
   });
 
+  const rateLimitRedis = new Redis(redisUrl);
   await app.register(cors, { origin: true });
   await app.register(rateLimit, {
     max: 100,
     timeWindow: "1 minute",
     allowList: ["127.0.0.1"],
     keyGenerator: (req) => req.ip,
-    redis: new Redis(redisUrl),
+    redis: rateLimitRedis,
   });
   await app.register(websocketPlugin, { options: { maxPayload: 256 } });
 
@@ -122,6 +123,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Shutting down API server");
     await app.close();
+    await rateLimitRedis.quit();
     await redis.quit();
     await readPool.end();
     await writePool.end();

@@ -289,9 +289,13 @@ export const tokenRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       }));
 
       if (req.query.from || req.query.to) {
-        const to   = req.query.to   ? BigInt(req.query.to)   : BigInt(Math.floor(Date.now() / 1000));
-        const from = req.query.from ? BigInt(req.query.from) : 0n;
-        return reply.send(enriched.filter((c) => BigInt(c.bucketTime) >= from && BigInt(c.bucketTime) <= to));
+        try {
+          const to   = req.query.to   ? BigInt(req.query.to)   : BigInt(Math.floor(Date.now() / 1000));
+          const from = req.query.from ? BigInt(req.query.from) : 0n;
+          return reply.send(enriched.filter((c) => BigInt(c.bucketTime) >= from && BigInt(c.bucketTime) <= to));
+        } catch {
+          return reply.status(400).send({ error: "from and to must be valid unix timestamps" });
+        }
       }
 
       return reply.send(enriched);

@@ -21,8 +21,17 @@ function weiToEth(wei: string | bigint | null | undefined): string | null {
 
 interface Opts { pool: Pool; redis: RedisClient; }
 
+const ADDR_RE = /^0x[a-f0-9]{40}$/;
+
 export const userRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   const { pool, redis } = opts;
+
+  app.addHook("preHandler", async (req, reply) => {
+    const wallet = (req.params as any)?.wallet;
+    if (wallet && !ADDR_RE.test(wallet.toLowerCase())) {
+      return reply.status(400).send({ error: "Invalid wallet address" });
+    }
+  });
 
   // ── GET /users/:wallet/positions ──────────────────────────────────────────────
   // Positions from holder_balances (current token holdings)
