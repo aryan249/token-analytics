@@ -115,6 +115,23 @@ jobs:
             --set installCRDs=true \
             --wait --timeout 5m
 
+      - name: Install Prometheus + Grafana (if not present)
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+          helm repo update
+          helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+            --namespace monitoring --create-namespace \
+            -f helm/observability/prometheus-values.yaml \
+            --wait --timeout 5m
+
+      - name: Install Loki (log aggregation, if not present)
+        run: |
+          helm repo add grafana https://grafana.github.io/helm-charts || true
+          helm upgrade --install loki grafana/loki-stack \
+            --namespace monitoring --create-namespace \
+            -f helm/observability/loki-values.yaml \
+            --wait --timeout 5m
+
       - name: Deploy with Helm
         run: |
           helm upgrade --install token-analytics helm/token-analytics \
@@ -138,6 +155,12 @@ jobs:
           echo ""
           echo "=== Ingress ==="
           kubectl get ingress -n token-analytics
+          echo ""
+          echo "=== Monitoring Stack ==="
+          kubectl get pods -n monitoring
+          echo ""
+          echo "=== ServiceMonitor ==="
+          kubectl get servicemonitor -n token-analytics
 
   # Note: When Argo CD is enabled, remove the deploy job above.
   # Argo CD will watch git and sync automatically.
