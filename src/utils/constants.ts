@@ -3,6 +3,7 @@ import type { CandleResolution } from "../types/events";
 // ── Math primitives ───────────────────────────────────────────────────────────
 export const Q96               = 2n ** 96n;
 export const WAD               = 10n ** 18n;
+export const TWO_192           = 2n ** 192n;
 export const CHAINLINK_DECIMALS = 10n ** 8n;
 
 // ── Candle resolutions ────────────────────────────────────────────────────────

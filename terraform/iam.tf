@@ -137,6 +137,20 @@ resource "aws_iam_role_policy_attachment" "runner_ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+resource "aws_iam_role_policy" "runner_eks" {
+  name = "eks-describe"
+  role = aws_iam_role.runner.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["eks:DescribeCluster"]
+      Resource = "arn:aws:eks:${var.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/${var.project}"
+    }]
+  })
+}
+
 resource "aws_iam_instance_profile" "runner" {
   name = "${var.project}-runner-profile"
   role = aws_iam_role.runner.name

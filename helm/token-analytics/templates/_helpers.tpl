@@ -28,6 +28,15 @@ securityContext:
   readOnlyRootFilesystem: true
   capabilities:
     drop: ["ALL"]
+volumeMounts:
+  - name: tmp
+    mountPath: /tmp
+{{- end -}}
+
+{{- define "token-analytics.tmpVolume" -}}
+volumes:
+  - name: tmp
+    emptyDir: {}
 {{- end -}}
 
 {{- define "token-analytics.antiAffinity" -}}

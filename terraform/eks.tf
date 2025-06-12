@@ -35,6 +35,11 @@ resource "aws_eks_cluster" "main" {
     endpoint_public_access  = true
   }
 
+  access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
+
   enabled_cluster_log_types = ["api", "audit", "authenticator"]
 
   depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
@@ -64,4 +69,24 @@ resource "aws_eks_node_group" "workers" {
     aws_iam_role_policy_attachment.eks_cni,
     aws_iam_role_policy_attachment.ecr_read,
   ]
+}
+
+# ── EKS Access: allow runner role to manage the cluster ──────────────────────
+
+resource "aws_eks_access_entry" "runner" {
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = aws_iam_role.runner.arn
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "runner_admin" {
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = aws_iam_role.runner.arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [aws_eks_access_entry.runner]
 }

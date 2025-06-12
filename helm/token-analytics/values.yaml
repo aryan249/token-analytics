@@ -1,5 +1,5 @@
 image:
-  repository: 207270671706.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
+  repository: "207270671706.dkr.ecr.ap-south-1.amazonaws.com/token-analytics"
   tag: "8f5ca3c70cd4e7cee26bc3487ee1767f42beec39"
   pullPolicy: Always
 

@@ -3,7 +3,7 @@ import { insertTrade }               from "../utils/db/trades";
 import { EVENT_CHANNELS, publishTokenUpdate, getEthUsdRate, KEYS, makeRedisClient, type RedisClient } from "../clients/redis";
 import { invalidate }                from "../api/cache";
 import { BaseProcessor }             from "./base-processor";
-import { ethPriceToUsd }             from "../utils/math";
+import { ethPriceToUsd, bigIntReviver } from "../utils/math";
 import { upsertPoolState, getPoolLiquidityEth } from "../utils/db/pool-state";
 import { logger }                    from "../utils/logger";
 import type { DecodedEvent, PoolSwapEvent, PoolStateUpdatedEvent, ERC20TransferEvent } from "../types/events";
@@ -11,9 +11,6 @@ import type { DecodedEvent, PoolSwapEvent, PoolStateUpdatedEvent, ERC20TransferE
 const ZERO = "0x0000000000000000000000000000000000000000";
 const TRANSFER_GROUP = "trade-transfer-reader";
 
-function bigIntReviver(_k: string, v: unknown): unknown {
-  return typeof v === "string" && /^-?\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v;
-}
 
 class TradeProcessor extends BaseProcessor {
   get channel() { return EVENT_CHANNELS.swap; }

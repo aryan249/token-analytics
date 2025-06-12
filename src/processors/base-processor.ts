@@ -3,11 +3,9 @@ import { makePool } from "../clients/postgres";
 import { makeRedisClient, type RedisClient } from "../clients/redis";
 import { bootstrapSchema } from "../utils/db/schema";
 import { logger } from "../utils/logger";
+import { bigIntReviver } from "../utils/math";
 import type { DecodedEvent } from "../types/events";
 
-function bigIntReviver(_k: string, v: unknown): unknown {
-  return typeof v === "string" && /^-?\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v;
-}
 
 const BLOCK_TIMEOUT = 5000;
 const CLAIM_IDLE_MS = 30_000;

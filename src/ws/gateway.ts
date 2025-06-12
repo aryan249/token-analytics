@@ -16,24 +16,12 @@ import type { WebSocket as WS }    from "@fastify/websocket";
 import type { Pool }               from "pg";
 import type { RedisClient }        from "../clients/redis";
 import { KEYS, getEthUsdRate, EVENT_CHANNELS, UI_STREAMS, makeRedisClient } from "../clients/redis";
+import { WAD } from "../utils/constants";
 import { getTokenList }            from "../utils/db/tokens";
-import { ethPriceToUsd, formatUsd } from "../utils/math";
+import { ethPriceToUsd, formatUsd, weiToEth } from "../utils/math";
 import { logger }                  from "../utils/logger";
 
-const WAD = 10n ** 18n;
 
-/** Convert a raw wei bigint string to a human-readable ETH decimal string. */
-function weiToEth(wei: string | null | undefined): string | null {
-  if (wei == null) return null;
-  try {
-    const n = BigInt(wei);
-    if (n === 0n) return "0";
-    const whole = n / WAD;
-    const frac  = n % WAD;
-    if (frac === 0n) return whole.toString();
-    return `${whole}.${frac.toString().padStart(18, "0").replace(/0+$/, "")}`;
-  } catch { return null; }
-}
 
 // ── Connected clients with heartbeat ─────────────────────────────────────────
 

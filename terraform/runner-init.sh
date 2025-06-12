@@ -11,6 +11,20 @@ systemctl start docker
 curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
 dnf install -y nodejs
 
+# Install kubectl
+curl -LO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+rm kubectl
+
+# Install Helm
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# Install AWS CLI v2
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+unzip -q awscliv2.zip
+./aws/install
+rm -rf aws awscliv2.zip
+
 # Create runner user
 useradd -m runner || true
 usermod -aG docker runner

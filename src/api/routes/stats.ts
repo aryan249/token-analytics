@@ -3,21 +3,8 @@ import type { Pool } from "pg";
 import { KEYS, getEthUsdRate, type RedisClient } from "../../clients/redis";
 import { withCache }       from "../cache";
 import { getPlatformStats, getTopFeeEarners24h } from "../../utils/db/stats";
-import { ethPriceToUsd, formatUsd } from "../../utils/math";
+import { ethPriceToUsd, formatUsd, weiToEth } from "../../utils/math";
 
-/** Convert a raw wei bigint string to a human-readable ETH decimal string. */
-function weiToEth(wei: string | null | undefined): string | null {
-  if (wei == null) return null;
-  try {
-    const n = BigInt(wei);
-    if (n === 0n) return "0";
-    const WAD = 10n ** 18n;
-    const whole = n / WAD;
-    const frac  = n % WAD;
-    if (frac === 0n) return whole.toString();
-    return `${whole}.${frac.toString().padStart(18, "0").replace(/0+$/, "")}`;
-  } catch { return null; }
-}
 
 interface Opts { pool: Pool; redis: RedisClient; }
 

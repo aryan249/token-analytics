@@ -34,4 +34,5 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 30
             failureThreshold: 3
+      {{- include "token-analytics.tmpVolume" . | nindent 6 }}
       restartPolicy: Always
