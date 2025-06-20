@@ -1,0 +1,159 @@
+version: "3.9"
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB:       flaunch
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:     ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout:  5s
+      retries:  10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test:     ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout:  5s
+      retries:  10
+
+  # ── Indexer ───────────────────────────────────────────────────────────────────
+
+  indexer:
+    build: .
+    command: ["ts-node", "--transpile-only", "src/indexer/main.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
+      REDIS_URL:    redis://redis:6379
+      NODE_ENV:     production
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── Processors ────────────────────────────────────────────────────────────────
+
+  processor-trade:
+    build: .
+    command: ["ts-node", "--transpile-only", "src/processors/trade.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
+      REDIS_URL:    redis://redis:6379
+      NODE_ENV:     production
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  processor-position:
+    build: .
+    command: ["ts-node", "--transpile-only", "src/processors/position.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
+      REDIS_URL:    redis://redis:6379
+      NODE_ENV:     production
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  processor-candle:
+    build: .
+    command: ["ts-node", "--transpile-only", "src/processors/candle.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
+      REDIS_URL:    redis://redis:6379
+      NODE_ENV:     production
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  processor-fees:
+    build: .
+    command: ["ts-node", "--transpile-only", "src/processors/fees.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
+      REDIS_URL:    redis://redis:6379
+      NODE_ENV:     production
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  processor-token:
+    build: .
+    command: ["ts-node", "--transpile-only", "src/processors/token.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
+      REDIS_URL:    redis://redis:6379
+      NODE_ENV:     production
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+volumes:
+  pgdata:
+  redisdata:
