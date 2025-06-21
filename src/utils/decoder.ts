@@ -363,13 +363,18 @@ function decodeManagerDeployed(log: RawLog, chainId: number): ManagerDeployedEve
 function decodeManagerInitializedFeeSplit(log: RawLog, chainId: number): ManagerInitializedFeeSplitEvent {
   const l = asLog(log);
   const d = decodeEventLog({ abi: ADDRESS_FEE_SPLIT_MANAGER_ABI, eventName: "ManagerInitialized", data: l.data, topics: l.topics });
-  const p = d.args._params as { creatorShare: bigint; ownerShare: bigint };
+  const p = d.args._params as {
+    creatorShare:    bigint;
+    ownerShare:      bigint;
+    recipientShares: Array<{ recipient: Address; share: bigint }>;
+  };
   return {
     ...base(log, chainId),
-    eventType:    "ManagerInitializedFeeSplit",
-    owner:        d.args._owner as Address,
-    creatorShare: p.creatorShare,
-    ownerShare:   p.ownerShare,
+    eventType:       "ManagerInitializedFeeSplit",
+    owner:           d.args._owner as Address,
+    creatorShare:    p.creatorShare,
+    ownerShare:      p.ownerShare,
+    recipientShares: (p.recipientShares ?? []).map((r) => ({ recipient: r.recipient, share: r.share })),
   };
 }
 
