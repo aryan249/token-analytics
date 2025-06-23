@@ -395,7 +395,9 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
   readStream(UI_STREAMS.trades, (raw) => {
     let data: any;
     try { data = JSON.parse(raw); } catch { return; }
+    if (data.type !== "trade") return; // skip wallet/fee events sharing this stream
     const token = (data.tokenAddress || "").toLowerCase();
+    if (!token) return;
     onTradeUpdate(token, raw, reader, pool);
   });
 
