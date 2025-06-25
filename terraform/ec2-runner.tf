@@ -49,7 +49,7 @@ resource "aws_instance" "runner" {
   iam_instance_profile   = aws_iam_instance_profile.runner.name
 
   root_block_device {
-    volume_size = 30
+    volume_size = var.runner_volume_size
     volume_type = "gp3"
   }
 
