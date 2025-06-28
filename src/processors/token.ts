@@ -2,7 +2,7 @@ import "dotenv/config";
 import { createPublicClient, http, type Address } from "viem";
 import { base }                                   from "viem/chains";
 import { registerToken, upsertRoyaltyMembers }    from "../utils/db/tokens";
-import { EVENT_CHANNELS }                         from "../clients/redis";
+import { EVENT_CHANNELS, PUBSUB_CHANNELS }        from "../clients/redis";
 import { ERC20_METADATA_ABI }                     from "../abis/abis";
 import { BaseProcessor }                          from "./base-processor";
 import { logger }                                 from "../utils/logger";
@@ -76,15 +76,17 @@ class TokenProcessor extends BaseProcessor {
 
       // Publish resolved metadata so the WS gateway can update its tokenMetaMap
       // (totalSupply is fetched via RPC, not present in the original PoolCreated event)
-      await this.publisher.xAdd(EVENT_CHANNELS.meta, "*", {
-        data: JSON.stringify({
-          eventType:   "TokenMetaUpdated",
-          tokenAddress: e.tokenAddress,
-          name,
-          symbol,
-          totalSupply:  totalSupply != null ? totalSupply.toString() + "n" : null,
-        }),
+      const metaMsg = JSON.stringify({
+        eventType:   "TokenMetaUpdated",
+        tokenAddress: e.tokenAddress,
+        name,
+        symbol,
+        totalSupply:  totalSupply != null ? totalSupply.toString() + "n" : null,
       });
+      await Promise.all([
+        this.publisher.xAdd(EVENT_CHANNELS.meta, "*", { data: metaMsg }),
+        this.publisher.publish(PUBSUB_CHANNELS.meta, metaMsg),
+      ]);
 
       // Cache txHash so ManagerInitializedFeeSplit (same tx) can link to this token
       this.recentTxTokens.set(e.transactionHash, e.tokenAddress.toLowerCase());
