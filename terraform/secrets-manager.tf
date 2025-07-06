@@ -11,7 +11,7 @@ resource "aws_secretsmanager_secret_version" "app" {
   secret_id = aws_secretsmanager_secret.app.id
 
   secret_string = jsonencode({
-    POSTGRES_URL   = "postgresql://${var.rds_username}:${var.rds_password}@${aws_db_instance.postgres.endpoint}/${var.rds_db_name}"
+    POSTGRES_URL   = "postgresql://${var.rds_username}:${var.rds_password}@${aws_db_instance.postgres.endpoint}/${var.rds_db_name}?sslmode=no-verify"
     REDIS_URL      = "redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:${aws_elasticache_cluster.redis.port}"
     ALCHEMY_WS_URL = var.alchemy_ws_url
     JWT_SECRET     = var.jwt_secret
