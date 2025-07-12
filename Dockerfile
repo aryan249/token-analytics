@@ -5,7 +5,7 @@ COPY package*.json tsconfig.json ./
 RUN npm ci
 COPY src/ ./src/
 
-RUN npx tsc --outDir dist --skipLibCheck --noEmitOnError false; \
+RUN npx tsc --outDir dist --skipLibCheck --noEmitOnError false 2>&1 | grep -v "node_modules/" || true; \
     test -f dist/indexer/main.js || (echo "Build failed: dist not produced" && exit 1)
 
 FROM node:20-alpine
