@@ -12,6 +12,18 @@ export function ethPriceToUsd(priceEthWad: bigint, ethUsdRate: bigint): number {
   return Number(priceEthWad * ethUsdRate) / Number(WAD * 10n ** 8n);
 }
 
+/** Format a USD value as a string — uses full precision (scientific notation for tiny values). */
+export function formatUsd(value: number, minDecimals = 0): string {
+  // Large values (>= 0.01): fixed-point with appropriate decimals
+  const abs = Math.abs(value);
+  if (abs >= 1)      return value.toFixed(Math.max(minDecimals, 2));
+  if (abs >= 0.01)   return value.toFixed(Math.max(minDecimals, 4));
+  if (abs >= 0.0001) return value.toFixed(Math.max(minDecimals, 6));
+  if (abs === 0)     return "0";
+  // Tiny values: let JS pick scientific notation (matches FLaunch's format)
+  return value.toString();
+}
+
 export function getBucketTime(blockTimestamp: bigint, resolution: CandleResolution): bigint {
   const seconds = BigInt(CANDLE_SECONDS[resolution]);
   return (blockTimestamp / seconds) * seconds;
