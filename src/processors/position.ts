@@ -39,6 +39,7 @@ async function markProcessed(pool: Pool, eventId: string): Promise<boolean> {
 
 class PositionProcessor extends BaseProcessor {
   get channel() { return EVENT_CHANNELS.transfer; }
+  get groupName() { return "position-processor"; }
 
   async handle(event: DecodedEvent): Promise<void> {
     if (event.eventType !== "ERC20Transfer") return;

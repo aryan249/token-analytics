@@ -14,7 +14,7 @@ import {
   import { WATCHED_TOPICS }                              from "../abis/abis";
   import { readCheckpoint, writeCheckpoint, insertBlockHeader } from "../utils/db/checkpoint";
   import { getAllTokenAddresses, getAllPoolMappings } from "../utils/db/tokens";
-  import { EVENT_CHANNELS }   from "../clients/redis";
+  import { EVENT_CHANNELS, STREAM_MAX_LEN } from "../clients/redis";
   import { detectAndRecover } from "./reorg";
   import { decodeLog }        from "../utils/decoder";
   import type { RawLog, BlockHeader, DecodedEvent, ManagerDeployedEvent, PoolCreatedEvent } from "../types/events";
@@ -162,10 +162,27 @@ import {
 
       if (reorg.detected) return;
 
-      const logs      = await this.fetchLogsForBlock(block.number, block.timestamp);
+      const tokensBefore = new Set(this.knownTokens);
+      let logs      = await this.fetchLogsForBlock(block.number, block.timestamp);
       const firstPass = this.decodeLogs(logs);
       this.updateDynamicManagers(firstPass);
       this.updatePoolMappings(firstPass);
+
+      // Re-fetch logs for newly discovered tokens to pick up their ERC20 Transfers
+      const newTokens = [...this.knownTokens].filter((t) => !tokensBefore.has(t));
+      if (newTokens.length > 0) {
+        const tsMap = new Map([[block.number, block.timestamp]]);
+        const extra = await this.fetchLogsForAddresses(block.number, block.number, tsMap, newTokens);
+        if (extra.length > 0) {
+          const seen = new Set(logs.map((l) => `${l.blockNumber}:${l.logIndex}`));
+          for (const l of extra) {
+            const key = `${l.blockNumber}:${l.logIndex}`;
+            if (!seen.has(key)) { seen.add(key); logs.push(l); }
+          }
+          logs.sort((a, b) => a.logIndex - b.logIndex);
+        }
+      }
+
       const decoded   = this.decodeLogs(logs);
       await this.publishToChannels(decoded);
 
@@ -221,9 +238,11 @@ import {
 
     private async publishToChannels(events: DecodedEvent[]): Promise<void> {
       for (const event of events) {
-        const channel = this.routeToChannel(event);
-        if (!channel) continue;
-        await this.redis.publish(channel, JSON.stringify(event, bigIntReplacer));
+        const stream = this.routeToChannel(event);
+        if (!stream) continue;
+        await this.redis.xAdd(stream, "*", {
+          data: JSON.stringify(event, bigIntReplacer),
+        }, { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAX_LEN } });
       }
     }
 
@@ -268,13 +287,31 @@ import {
           timestampMap.set(h.blockNumber, h.blockTimestamp);
         }
 
+        const tokensBefore = new Set(this.knownTokens);
         const logs = await this.fetchLogsWithTimestamps(start, end, timestampMap);
         // First pass: extract pool/manager mappings so swaps in the same batch resolve correctly
         const firstPass = this.decodeLogs(logs);
         this.updateDynamicManagers(firstPass);
         this.updatePoolMappings(firstPass);
+
+        // If new tokens were discovered in this batch, re-fetch logs to pick up
+        // their ERC20 Transfer events (weren't in the address filter initially)
+        const newTokens = [...this.knownTokens].filter((t) => !tokensBefore.has(t));
+        let allLogs = logs;
+        if (newTokens.length > 0) {
+          const extraLogs = await this.fetchLogsForAddresses(start, end, timestampMap, newTokens);
+          if (extraLogs.length > 0) {
+            const seen = new Set(allLogs.map((l) => `${l.blockNumber}:${l.logIndex}`));
+            for (const l of extraLogs) {
+              const key = `${l.blockNumber}:${l.logIndex}`;
+              if (!seen.has(key)) { seen.add(key); allLogs.push(l); }
+            }
+            allLogs.sort((a, b) => a.blockNumber < b.blockNumber ? -1 : a.blockNumber > b.blockNumber ? 1 : a.logIndex - b.logIndex);
+          }
+        }
+
         // Second pass: re-decode with updated mappings (fixes null tokenAddress on same-batch swaps)
-        const decoded = this.decodeLogs(logs);
+        const decoded = this.decodeLogs(allLogs);
         await this.publishToChannels(decoded);
         await writeCheckpoint(this.pool, config.chainId, end, "0x" as Hash);
 
@@ -337,6 +374,30 @@ import {
       }
 
       return merged
+        .map((l) => toRawLog(l, timestampMap.get(l.blockNumber!) ?? 0n))
+        .filter((l) => l.topics.length > 0 && WATCHED_TOPICS.has(l.topics[0] as `0x${string}`));
+    }
+
+    private async fetchLogsForAddresses(
+      fromBlock:    bigint,
+      toBlock:      bigint,
+      timestampMap: Map<bigint, bigint>,
+      addresses:    string[],
+    ): Promise<RawLog[]> {
+      const LOGS_CHUNK = 10n;
+      const allLogs: Awaited<ReturnType<typeof this.httpClient.getLogs>> = [];
+      for (let chunkStart = fromBlock; chunkStart <= toBlock; chunkStart += LOGS_CHUNK) {
+        const chunkEnd = chunkStart + LOGS_CHUNK - 1n < toBlock ? chunkStart + LOGS_CHUNK - 1n : toBlock;
+        const chunk = await withRetry(
+          () => this.httpClient.getLogs({
+            fromBlock: chunkStart, toBlock: chunkEnd,
+            address: addresses as `0x${string}`[],
+          }),
+          `getLogs-new-tokens-${chunkStart}`
+        );
+        allLogs.push(...chunk);
+      }
+      return allLogs
         .map((l) => toRawLog(l, timestampMap.get(l.blockNumber!) ?? 0n))
         .filter((l) => l.topics.length > 0 && WATCHED_TOPICS.has(l.topics[0] as `0x${string}`));
     }

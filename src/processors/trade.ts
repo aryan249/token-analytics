@@ -1,7 +1,6 @@
 import "dotenv/config";
-import { createClient, type RedisClientType } from "redis";
 import { insertTrade }               from "../utils/db/trades";
-import { EVENT_CHANNELS, publishTokenUpdate, getEthUsdRate, KEYS } from "../clients/redis";
+import { EVENT_CHANNELS, publishTokenUpdate, getEthUsdRate, KEYS, makeRedisClient } from "../clients/redis";
 import { invalidate }                from "../api/cache";
 import { BaseProcessor }             from "./base-processor";
 import { ethPriceToUsd }             from "../utils/math";
@@ -10,6 +9,7 @@ import { logger }                    from "../utils/logger";
 import type { DecodedEvent, PoolSwapEvent, PoolStateUpdatedEvent, ERC20TransferEvent } from "../types/events";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
+const TRANSFER_GROUP = "trade-transfer-reader";
 
 function bigIntReviver(_k: string, v: unknown): unknown {
   return typeof v === "string" && /^-?\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v;
@@ -17,37 +17,53 @@ function bigIntReviver(_k: string, v: unknown): unknown {
 
 class TradeProcessor extends BaseProcessor {
   get channel() { return EVENT_CHANNELS.swap; }
+  get groupName() { return "trade-processor"; }
 
-  // txHash → { from, to } — populated from ERC20Transfer events (same tx as swap)
   private readonly makerCache = new Map<string, { from: string; to: string }>();
-
-  // Buffer for PoolStateUpdated events that arrived before their token was registered
   private readonly pendingPoolState = new Map<string, PoolStateUpdatedEvent>();
+
+  private transferReader!: RedisClient;
 
   async start(): Promise<void> {
     await super.start();
+    this.transferReader = await makeRedisClient(this.redisUrl);
+    const stream = EVENT_CHANNELS.transfer;
+    try {
+      await this.transferReader.xGroupCreate(stream, TRANSFER_GROUP, "0", { MKSTREAM: true });
+    } catch (err: any) {
+      if (!err?.message?.includes("BUSYGROUP")) throw err;
+    }
+  }
 
-    // Also subscribe to events:transfer to get maker addresses
-    const transferSub = createClient({ url: this.redisUrl }) as RedisClientType;
-    transferSub.on("error", (err) => logger.error({ err }, "Trade processor transfer sub error"));
-    await transferSub.connect();
-
-    await transferSub.subscribe(EVENT_CHANNELS.transfer, (message) => {
-      try {
-        const e = JSON.parse(message, bigIntReviver) as ERC20TransferEvent;
-        if (e.eventType !== "ERC20Transfer") return;
-        const from = e.from.toLowerCase();
-        const to   = e.to.toLowerCase();
-        // Only cache real transfers (not mints/burns) — these identify the trader
-        if (from !== ZERO && to !== ZERO) {
-          this.makerCache.set(e.transactionHash.toLowerCase(), { from, to });
-          // Evict old entries to bound memory
-          if (this.makerCache.size > 2000) {
-            this.makerCache.delete(this.makerCache.keys().next().value!);
-          }
+  private async drainTransfers(): Promise<void> {
+    const stream = EVENT_CHANNELS.transfer;
+    const consumer = `${TRANSFER_GROUP}-${process.pid}`;
+    try {
+      const results = await this.transferReader.xReadGroup(
+        TRANSFER_GROUP, consumer,
+        [{ key: stream, id: ">" }],
+        { COUNT: 100, BLOCK: 0 },
+      );
+      if (!results) return;
+      for (const { messages } of results) {
+        for (const { id, message } of messages) {
+          try {
+            const e = JSON.parse(message.data, bigIntReviver) as ERC20TransferEvent;
+            if (e.eventType === "ERC20Transfer") {
+              const from = e.from.toLowerCase();
+              const to   = e.to.toLowerCase();
+              if (from !== ZERO && to !== ZERO) {
+                this.makerCache.set(e.transactionHash.toLowerCase(), { from, to });
+                if (this.makerCache.size > 2000) {
+                  this.makerCache.delete(this.makerCache.keys().next().value!);
+                }
+              }
+            }
+          } catch { /* ignore */ }
+          await this.transferReader.xAck(stream, TRANSFER_GROUP, id);
         }
-      } catch { /* ignore */ }
-    });
+      }
+    } catch { /* non-fatal */ }
   }
 
   private async applyPoolState(e: PoolStateUpdatedEvent): Promise<boolean> {
@@ -115,7 +131,9 @@ class TradeProcessor extends BaseProcessor {
     const e = event as PoolSwapEvent;
     if (!e.tokenAddress) return;
 
-    // Resolve maker from in-memory cache (set by ERC20Transfer subscription)
+    // Drain pending transfers so makerCache is populated before we look up
+    await this.drainTransfers();
+
     const txKey     = e.transactionHash.toLowerCase();
     const makerEntry = this.makerCache.get(txKey);
     const maker = makerEntry

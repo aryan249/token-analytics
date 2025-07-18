@@ -11,6 +11,7 @@ import type { CandleResolution, DecodedEvent, PoolSwapEvent } from "../types/eve
 
 class CandleProcessor extends BaseProcessor {
   get channel() { return EVENT_CHANNELS.swap; }
+  get groupName() { return "candle-processor"; }
 
   async handle(event: DecodedEvent): Promise<void> {
     if (event.eventType !== "PoolSwap") return;
