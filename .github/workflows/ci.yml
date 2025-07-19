@@ -1,4 +1,4 @@
-name: CI/CD
+name: Build and Push Image
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
 
 env:
   AWS_REGION: ap-south-1
+  ECR_REGISTRY: 207270671706.dkr.ecr.ap-south-1.amazonaws.com
   ECR_REPOSITORY: token-analytics
   IMAGE_TAG: ${{ github.sha }}
 
@@ -45,8 +46,6 @@ jobs:
     needs: lint-build-test
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || startsWith(github.ref, 'refs/heads/feat/') || startsWith(github.ref, 'refs/heads/fix/')
     runs-on: self-hosted
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4.1.7
 
@@ -56,56 +55,25 @@ jobs:
       - name: Login to ECR
         uses: docker/login-action@v3
         with:
-          registry: 207270671706.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          registry: ${{ env.ECR_REGISTRY }}
 
-      - name: Build, scan, and push
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
-            207270671706.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-            207270671706.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
-          cache-from: type=registry,ref=207270671706.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:cache
-          cache-to: type=registry,ref=207270671706.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:cache,mode=max
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest
+          cache-from: type=registry,ref=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:cache
+          cache-to: type=registry,ref=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:cache,mode=max
 
-      - name: Scan image for vulnerabilities
+      - name: Scan image
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: 207270671706.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          image-ref: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
           format: table
           severity: HIGH,CRITICAL
           exit-code: 0
 
-      - name: Update Helm values with new image tag
-        run: |
-          REGISTRY=207270671706.dkr.ecr.$AWS_REGION.amazonaws.com
-          sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|" helm/token-analytics/values.yaml
-          sed -i "s|repository:.*|repository: $REGISTRY/$ECR_REPOSITORY|" helm/token-analytics/values.yaml
 
-      - name: Commit and push image tag update
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add helm/token-analytics/values.yaml
-          git diff --cached --quiet && exit 0
-          git commit -m "chore: update image tag to ${IMAGE_TAG:0:8}"
-          # Retry push with rebase to handle concurrent CI runs
-          git push || (git pull --rebase && git push)
-
-  # ── Deployment handled by Argo CD ────────────────────────────────────────────
-  #
-  # CI only builds + pushes image tag to git. Argo CD detects the change and syncs.
-  #
-  # Flow:
-  #   Push to staging → CI updates values.yaml tag → Argo CD syncs staging
-  #   Merge to main   → CI updates values.yaml tag → Argo CD syncs production
-  #
-  # Platform services (Argo CD, ESO, monitoring) managed by:
-  #   terraform/platform/ (terraform apply)
-  #
-  # Manual operations:
-  #   argocd app list
-  #   argocd app sync token-analytics-staging
-  #   argocd app sync token-analytics-production
-  #   argocd app rollback token-analytics-production <revision>
