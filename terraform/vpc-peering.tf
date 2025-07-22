@@ -84,8 +84,8 @@ resource "aws_security_group_rule" "redis_from_peer" {
   count = length(var.peer_regions)
 
   type              = "ingress"
-  from_port         = 6379
-  to_port           = 6379
+  from_port         = var.redis_port
+  to_port           = var.redis_port
   protocol          = "tcp"
   cidr_blocks       = [var.peer_regions[count.index].vpc_cidr]
   security_group_id = aws_security_group.redis.id
@@ -97,8 +97,8 @@ resource "aws_security_group_rule" "eks_to_peer_redis" {
   count = length(var.peer_regions)
 
   type              = "egress"
-  from_port         = 6379
-  to_port           = 6379
+  from_port         = var.redis_port
+  to_port           = var.redis_port
   protocol          = "tcp"
   cidr_blocks       = [var.peer_regions[count.index].vpc_cidr]
   security_group_id = aws_security_group.eks_cluster.id

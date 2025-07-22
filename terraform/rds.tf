@@ -13,8 +13,8 @@ resource "aws_security_group" "rds" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    from_port       = 5432
-    to_port         = 5432
+    from_port       = var.postgres_port
+    to_port         = var.postgres_port
     protocol        = "tcp"
     security_groups = [aws_security_group.eks_cluster.id]
     description     = "PostgreSQL from EKS"

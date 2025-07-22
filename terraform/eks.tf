@@ -5,9 +5,9 @@ resource "aws_security_group" "eks_cluster" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    from_port = 443
-    to_port   = 443
-    protocol  = "tcp"
+    from_port   = var.eks_api_port
+    to_port     = var.eks_api_port
+    protocol    = "tcp"
     cidr_blocks = [var.vpc_cidr]
   }
 
