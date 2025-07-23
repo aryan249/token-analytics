@@ -159,11 +159,20 @@ function sortTokens(tokens: TrendingToken[], sort: SortOption): TrendingToken[] 
   const sorted = [...tokens];
   switch (sort) {
     case "marketCap":
+      // Trending = weighted score: volume (40%) + trades (30%) + mcap (20%) + fees (10%)
+      // Tokens with activity rank higher than dead tokens with high mcap
       return sorted.sort((a, b) => {
-        if (!a.marketCapETH && !b.marketCapETH) return 0;
-        if (!a.marketCapETH) return 1;
-        if (!b.marketCapETH) return -1;
-        return parseFloat(b.marketCapETH) - parseFloat(a.marketCapETH);
+        const scoreA =
+          parseFloat(a.twentyFourHourVolume) * 0.4 +
+          a.tradeCount24h * 1000 * 0.3 +
+          parseFloat(a.marketCapETH ?? "0") * 0.2 +
+          parseFloat(a.feesEarned) * 10000 * 0.1;
+        const scoreB =
+          parseFloat(b.twentyFourHourVolume) * 0.4 +
+          b.tradeCount24h * 1000 * 0.3 +
+          parseFloat(b.marketCapETH ?? "0") * 0.2 +
+          parseFloat(b.feesEarned) * 10000 * 0.1;
+        return scoreB - scoreA;
       });
     case "volume":
       return sorted.sort((a, b) =>

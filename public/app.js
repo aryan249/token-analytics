@@ -299,11 +299,18 @@ function goToPage(page) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+function trendingScore(t) {
+  return parseFloat(t.twentyFourHourVolume || 0) * 0.4 +
+    (t.tradeCount24h || 0) * 1000 * 0.3 +
+    parseFloat(t.marketCapETH || 0) * 0.2 +
+    parseFloat(t.feesEarned || 0) * 10000 * 0.1;
+}
+
 function sortTokens(tokens, sort) {
   const sorted = [...tokens];
   switch (sort) {
     case 'marketCap':
-      return sorted.sort((a, b) => (parseFloat(b.marketCapETH) || 0) - (parseFloat(a.marketCapETH) || 0));
+      return sorted.sort((a, b) => trendingScore(b) - trendingScore(a));
     case 'volume':
       return sorted.sort((a, b) => parseFloat(b.twentyFourHourVolume || 0) - parseFloat(a.twentyFourHourVolume || 0));
     case 'trades':
