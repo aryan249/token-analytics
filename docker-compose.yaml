@@ -1,6 +1,27 @@
 version: "3.9"
 
+x-common: &common
+  build: .
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  env_file: .env
+  environment:
+    POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
+    REDIS_URL:    redis://redis:6379
+    NODE_ENV:     production
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "3"
+
 services:
+
+  # ── Infrastructure ──────────────────────────────────────────────────────────
 
   postgres:
     image: postgres:16-alpine
@@ -30,129 +51,55 @@ services:
       timeout:  5s
       retries:  10
 
-  # ── Indexer ───────────────────────────────────────────────────────────────────
+  # ── Indexer ─────────────────────────────────────────────────────────────────
 
   indexer:
-    build: .
-    command: ["ts-node", "--transpile-only", "src/indexer/main.ts"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    env_file: .env
-    environment:
-      POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
-      REDIS_URL:    redis://redis:6379
-      NODE_ENV:     production
-    restart: unless-stopped
+    <<: *common
+    command: ["npx", "ts-node", "--transpile-only", "src/indexer/main.ts"]
     logging:
       driver: json-file
       options:
         max-size: "50m"
         max-file: "5"
 
-  # ── Processors ────────────────────────────────────────────────────────────────
+  # ── Processors ──────────────────────────────────────────────────────────────
 
   processor-trade:
-    build: .
-    command: ["ts-node", "--transpile-only", "src/processors/trade.ts"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    env_file: .env
-    environment:
-      POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
-      REDIS_URL:    redis://redis:6379
-      NODE_ENV:     production
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
-
-  processor-position:
-    build: .
-    command: ["ts-node", "--transpile-only", "src/processors/position.ts"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    env_file: .env
-    environment:
-      POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
-      REDIS_URL:    redis://redis:6379
-      NODE_ENV:     production
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
-
-  processor-candle:
-    build: .
-    command: ["ts-node", "--transpile-only", "src/processors/candle.ts"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    env_file: .env
-    environment:
-      POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
-      REDIS_URL:    redis://redis:6379
-      NODE_ENV:     production
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
-
-  processor-fees:
-    build: .
-    command: ["ts-node", "--transpile-only", "src/processors/fees.ts"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    env_file: .env
-    environment:
-      POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
-      REDIS_URL:    redis://redis:6379
-      NODE_ENV:     production
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
+    <<: *common
+    command: ["npx", "ts-node", "--transpile-only", "src/processors/trade.ts"]
 
   processor-token:
-    build: .
-    command: ["ts-node", "--transpile-only", "src/processors/token.ts"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    env_file: .env
+    <<: *common
+    command: ["npx", "ts-node", "--transpile-only", "src/processors/token.ts"]
+
+  processor-candle:
+    <<: *common
+    command: ["npx", "ts-node", "--transpile-only", "src/processors/candle.ts"]
+
+  processor-position:
+    <<: *common
+    command: ["npx", "ts-node", "--transpile-only", "src/processors/position.ts"]
+
+  processor-fees:
+    <<: *common
+    command: ["npx", "ts-node", "--transpile-only", "src/processors/fees.ts"]
+
+  processor-price:
+    <<: *common
+    command: ["npx", "ts-node", "--transpile-only", "src/processors/price.ts"]
+
+  # ── API + WebSocket ─────────────────────────────────────────────────────────
+
+  api:
+    <<: *common
+    command: ["npx", "ts-node", "--transpile-only", "src/api/server.ts"]
     environment:
       POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
       REDIS_URL:    redis://redis:6379
+      API_PORT:     "3000"
       NODE_ENV:     production
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
+    ports:
+      - "3000:3000"
 
 volumes:
   pgdata:
