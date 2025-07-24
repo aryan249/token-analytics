@@ -29,6 +29,33 @@ resource "aws_security_group" "redis" {
   tags = { Name = "${var.project}-redis-sg" }
 }
 
+# ── Redis Parameter Group (enable AOF persistence) ──────────────────────────
+#
+# AOF (append-only file) persists every write to disk. On Redis restart,
+# the AOF is replayed to restore state — no data loss for streams, caches,
+# or persisted processor state (makerCache, pendingPoolState, tokenMeta).
+#
+# Without AOF, a Redis restart loses all in-memory data (streams, cache, etc.)
+# and processors must re-derive state from the blockchain — causing minutes of
+# stale data and missed WebSocket updates.
+
+resource "aws_elasticache_parameter_group" "redis" {
+  name   = "${var.project}-redis-params"
+  family = "redis7"
+
+  parameter {
+    name  = "appendonly"
+    value = "yes"
+  }
+
+  parameter {
+    name  = "appendfsync"
+    value = "everysec"   # fsync every second — max 1s data loss on crash, good perf
+  }
+
+  tags = { Name = "${var.project}-redis-params" }
+}
+
 # ── ElastiCache Redis ────────────────────────────────────────────────────────
 
 resource "aws_elasticache_cluster" "redis" {
@@ -39,10 +66,12 @@ resource "aws_elasticache_cluster" "redis" {
   num_cache_nodes = 1
   port            = 6379
 
-  subnet_group_name  = aws_elasticache_subnet_group.main.name
-  security_group_ids = [aws_security_group.redis.id]
+  parameter_group_name = aws_elasticache_parameter_group.redis.name
+  subnet_group_name    = aws_elasticache_subnet_group.main.name
+  security_group_ids   = [aws_security_group.redis.id]
 
   snapshot_retention_limit = 1
+  snapshot_window          = "04:00-05:00"
   maintenance_window       = "sun:05:00-sun:06:00"
 
   tags = { Name = "${var.project}-redis" }

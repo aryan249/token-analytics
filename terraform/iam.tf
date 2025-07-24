@@ -151,6 +151,39 @@ resource "aws_iam_role_policy" "runner_eks" {
   })
 }
 
+resource "aws_iam_role_policy" "runner_tfstate" {
+  name = "terraform-state"
+  role = aws_iam_role.runner.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+        ]
+        Resource = [
+          "arn:aws:s3:::token-analytics-tfstate",
+          "arn:aws:s3:::token-analytics-tfstate/*",
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem",
+        ]
+        Resource = "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/terraform-locks"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "runner" {
   name = "${var.project}-runner-profile"
   role = aws_iam_role.runner.name
