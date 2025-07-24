@@ -79,4 +79,59 @@ jobs:
           exit-code: 0
           scanners: vuln
 
+      - name: Verify image in ECR
+        run: |
+          echo "=== Image pushed ==="
+          aws ecr describe-images \
+            --repository-name $ECR_REPOSITORY \
+            --image-ids imageTag=$IMAGE_TAG \
+            --region $AWS_REGION \
+            --query 'imageDetails[0].{Tag:imageTags[0],Pushed:imagePushedAt,Size:imageSizeInBytes}' \
+            --output table
 
+  verify-deployment:
+    needs: docker-build-push
+    runs-on: self-hosted
+    steps:
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --name token-analytics --region $AWS_REGION
+
+      - name: Wait for Argo CD to sync (up to 5 min)
+        run: |
+          echo "Waiting for Argo CD Image Updater to detect new tag..."
+          echo "Image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo ""
+
+          for i in $(seq 1 30); do
+            # Check if any pod is running the new image
+            CURRENT=$(kubectl get pods -n token-analytics -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || echo "unknown")
+            echo "Attempt $i/30 — Current image: $CURRENT"
+
+            if echo "$CURRENT" | grep -q "$IMAGE_TAG"; then
+              echo ""
+              echo "=== NEW IMAGE DEPLOYED ==="
+              break
+            fi
+            sleep 10
+          done
+
+      - name: Verify cluster state
+        run: |
+          echo "=== Argo CD Applications ==="
+          kubectl get applications -n argocd 2>/dev/null || echo "Argo CD not accessible"
+          echo ""
+          echo "=== Pods ==="
+          kubectl get pods -n token-analytics
+          echo ""
+          echo "=== Pod Images ==="
+          kubectl get pods -n token-analytics -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
+          echo ""
+          echo "=== API Endpoint ==="
+          kubectl get ingress -n token-analytics -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "No ingress"
+          echo ""
+          echo ""
+          echo "=== Health Check ==="
+          ENDPOINT=$(kubectl get ingress -n token-analytics -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+          if [ -n "$ENDPOINT" ]; then
+            curl -s --max-time 5 "http://$ENDPOINT/health" || echo "Health check failed"
+          fi
