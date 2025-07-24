@@ -40,12 +40,10 @@ function weiToEth(wei: string | null | undefined): string | null {
 // ── Connected clients with heartbeat ─────────────────────────────────────────
 
 const HEARTBEAT_INTERVAL = 30_000;
-const HEARTBEAT_TIMEOUT  = 10_000;
 
 interface TrackedClient {
   ws:       WS;
   alive:    boolean;
-  timer?:   ReturnType<typeof setTimeout>;
 }
 
 const clientMap = new Map<WS, TrackedClient>();
@@ -58,9 +56,6 @@ function broadcast(msg: object): void {
   }
 }
 
-function getClientCount(): number {
-  return clientMap.size;
-}
 
 // ── Token metadata cache ──────────────────────────────────────────────────────
 

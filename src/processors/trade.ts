@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { insertTrade }               from "../utils/db/trades";
-import { EVENT_CHANNELS, publishTokenUpdate, getEthUsdRate, KEYS, makeRedisClient } from "../clients/redis";
+import { EVENT_CHANNELS, publishTokenUpdate, getEthUsdRate, KEYS, makeRedisClient, type RedisClient } from "../clients/redis";
 import { invalidate }                from "../api/cache";
 import { BaseProcessor }             from "./base-processor";
 import { ethPriceToUsd }             from "../utils/math";

@@ -79,7 +79,7 @@ export const authRoutes: FastifyPluginAsync<AuthOpts> = async (app, { redis, jwt
     // Delete nonce (single use)
     await redis.del(nonceKey(wallet));
 
-    const token = jwt.sign({ wallet }, jwtSecret, { expiresIn: jwtExpiry });
+    const token = jwt.sign({ wallet }, jwtSecret, { expiresIn: jwtExpiry } as jwt.SignOptions);
 
     logger.info({ wallet }, "User authenticated");
     return reply.send({ token, wallet });
