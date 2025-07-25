@@ -1,5 +1,3 @@
-// src/types/events.ts
-
 import type { Address, Hash } from "viem";
 
 export interface RawLog {
@@ -203,11 +201,17 @@ export interface ManagerDeployedEvent extends BaseEvent {
   managerImplementation: Address;
 }
 
+export interface RoyaltyShare {
+  recipient: Address;
+  share:     bigint;
+}
+
 export interface ManagerInitializedFeeSplitEvent extends BaseEvent {
-  eventType:    "ManagerInitializedFeeSplit";
-  owner:        Address;
-  creatorShare: bigint;
-  ownerShare:   bigint;
+  eventType:       "ManagerInitializedFeeSplit";
+  owner:           Address;
+  creatorShare:    bigint;
+  ownerShare:      bigint;
+  recipientShares: RoyaltyShare[];
 }
 
 export interface ManagerInitializedStakingEvent extends BaseEvent {

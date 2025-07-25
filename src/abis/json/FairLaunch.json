@@ -1,0 +1,24 @@
+[
+  {
+    "type": "event",
+    "name": "FairLaunchCreated",
+    "inputs": [
+      { "name": "_poolId",   "type": "bytes32", "indexed": true,  "internalType": "PoolId"  },
+      { "name": "_tokens",   "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "_startsAt", "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "_endsAt",   "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "FairLaunchEnded",
+    "inputs": [
+      { "name": "_poolId",  "type": "bytes32", "indexed": true,  "internalType": "PoolId"  },
+      { "name": "_revenue", "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "_supply",  "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "_endedAt", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  }
+]

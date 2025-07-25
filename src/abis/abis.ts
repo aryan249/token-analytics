@@ -112,6 +112,7 @@ export const ERC20_ABI = parseAbi([
 export const ERC20_METADATA_ABI = parseAbi([
   "function name() view returns (string)",
   "function symbol() view returns (string)",
+  "function totalSupply() view returns (uint256)",
 ]);
 
 export const ERC721_ABI = parseAbi([

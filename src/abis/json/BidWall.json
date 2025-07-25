@@ -1,0 +1,63 @@
+[
+  {
+    "type": "event",
+    "name": "BidWallInitialized",
+    "inputs": [
+      { "name": "_poolId",    "type": "bytes32", "indexed": true,  "internalType": "PoolId"  },
+      { "name": "_eth",       "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "_tickLower", "type": "int24",   "indexed": false, "internalType": "int24"   },
+      { "name": "_tickUpper", "type": "int24",   "indexed": false, "internalType": "int24"   }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BidWallRepositioned",
+    "inputs": [
+      { "name": "_poolId",    "type": "bytes32", "indexed": true,  "internalType": "PoolId"  },
+      { "name": "_eth",       "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "_tickLower", "type": "int24",   "indexed": false, "internalType": "int24"   },
+      { "name": "_tickUpper", "type": "int24",   "indexed": false, "internalType": "int24"   }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BidWallDeposit",
+    "inputs": [
+      { "name": "_poolId",  "type": "bytes32", "indexed": true,  "internalType": "PoolId"  },
+      { "name": "_added",   "type": "uint256", "indexed": false, "internalType": "uint256" },
+      { "name": "_pending", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BidWallClosed",
+    "inputs": [
+      { "name": "_poolId",    "type": "bytes32", "indexed": true,  "internalType": "PoolId"  },
+      { "name": "_recipient", "type": "address", "indexed": false, "internalType": "address" },
+      { "name": "_eth",       "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BidWallRewardsTransferred",
+    "inputs": [
+      { "name": "_poolId",    "type": "bytes32", "indexed": true,  "internalType": "PoolId"  },
+      { "name": "_recipient", "type": "address", "indexed": false, "internalType": "address" },
+      { "name": "_tokens",    "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BidWallDisabledStateUpdated",
+    "inputs": [
+      { "name": "_poolId",   "type": "bytes32", "indexed": true,  "internalType": "PoolId" },
+      { "name": "_disabled", "type": "bool",    "indexed": false, "internalType": "bool"   }
+    ],
+    "anonymous": false
+  }
+]
