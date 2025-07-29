@@ -1,5 +1,3 @@
-// src/shared/logger.ts
-
 import pino from "pino";
 
 // Logger reads env vars directly so it can be imported anywhere

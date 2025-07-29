@@ -1,6 +1,3 @@
-// src/processor/decoder.ts
-// Pure function: RawLog → DecodedEvent | null. No I/O.
-
 import { decodeEventLog, type Hash, type Address } from "viem";
 import {
   POSITION_MANAGER_ABI, FAIR_LAUNCH_ABI, BID_WALL_ABI,
