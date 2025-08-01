@@ -1,5 +1,3 @@
-// src/indexer/config.ts
-
 import { z } from "zod";
 import "dotenv/config";
 
