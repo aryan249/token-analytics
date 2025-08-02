@@ -70,9 +70,11 @@ prometheus:
                 summary: "API health check failing"
   alertmanager:
     enabled: false
-  pushgateway:
+  "prometheus-pushgateway":
     enabled: false
-  kube-state-metrics:
+  "kube-state-metrics":
+    enabled: false
+  "prometheus-node-exporter":
     enabled: false
   configmapReload:
     prometheus:
@@ -83,8 +85,6 @@ prometheus:
         limits:
           cpu: 25m
           memory: 32Mi
-  nodeExporter:
-    enabled: false
 
 # ── Grafana ──────────────────────────────────────────────────────────────────
 
@@ -213,6 +213,7 @@ loki:
     compactor:
       retention_enabled: true
       working_directory: /var/loki/compactor
+      delete_request_store: filesystem
     schemaConfig:
       configs:
         - from: "2024-01-01"
@@ -222,6 +223,7 @@ loki:
           index:
             prefix: index_
             period: 24h
+  deploymentMode: SingleBinary
   singleBinary:
     replicas: 1
     resources:
@@ -233,6 +235,13 @@ loki:
         memory: 256Mi
     persistence:
       enabled: false
+    extraVolumes:
+      - name: data
+        emptyDir: {}
+    extraVolumeMounts:
+      - name: data
+        mountPath: /var/loki
+  # Disable everything except single-binary
   gateway:
     enabled: false
   read:
@@ -241,6 +250,14 @@ loki:
     replicas: 0
   backend:
     replicas: 0
+  chunksCache:
+    enabled: false
+  resultsCache:
+    enabled: false
+  lokiCanary:
+    enabled: false
+  test:
+    enabled: false
 
 # ── Promtail ─────────────────────────────────────────────────────────────────
 
