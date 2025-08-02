@@ -95,83 +95,19 @@ jobs:
           # Retry push with rebase to handle concurrent CI runs
           git push || (git pull --rebase && git push)
 
-  deploy:
-    needs: docker-build-push
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || startsWith(github.ref, 'refs/heads/feat/') || startsWith(github.ref, 'refs/heads/fix/')
-    runs-on: self-hosted
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4.1.7
-        with:
-          ref: ${{ github.ref }}
-
-      - name: Pull latest (includes image tag update from previous job)
-        run: git pull --ff-only origin ${{ github.ref_name }} || true
-
-      - name: Configure kubectl
-        run: aws eks update-kubeconfig --name token-analytics --region $AWS_REGION
-
-      - name: Install External Secrets Operator (if not present)
-        run: |
-          helm repo add external-secrets https://charts.external-secrets.io || true
-          helm repo update
-          helm upgrade --install external-secrets external-secrets/external-secrets \
-            --namespace external-secrets --create-namespace \
-            --set installCRDs=true \
-            --wait --timeout 5m
-
-      - name: Install monitoring stack (umbrella chart)
-        run: |
-          cd helm/observability
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
-          helm repo add grafana https://grafana.github.io/helm-charts 2>/dev/null || true
-          helm repo update
-          helm dependency build
-          cd ../..
-
-          helm upgrade --install observability helm/observability \
-            --namespace monitoring --create-namespace \
-            --timeout 10m || echo "WARNING: Monitoring install timed out — will retry next deploy"
-
-      - name: Deploy with Helm
-        run: |
-          # Auto-cleanup stuck Helm releases (failed/pending from previous runs)
-          kubectl delete secrets -n token-analytics \
-            -l owner=helm,status=pending-upgrade 2>/dev/null || true
-          kubectl delete secrets -n token-analytics \
-            -l owner=helm,status=failed 2>/dev/null || true
-
-          helm upgrade --install token-analytics helm/token-analytics \
-            --namespace token-analytics --create-namespace \
-            --set image.tag="${IMAGE_TAG}" \
-            --timeout 10m
-
-          # Wait for API pods only (indexer may CrashLoop on Alchemy rate limit)
-          kubectl rollout status deployment/api -n token-analytics --timeout=300s || true
-
-      - name: Verify deployment
-        run: |
-          echo "=== Pods ==="
-          kubectl get pods -n token-analytics
-          echo ""
-          echo "=== HPA ==="
-          kubectl get hpa -n token-analytics
-          echo ""
-          echo "=== PDBs ==="
-          kubectl get pdb -n token-analytics
-          echo ""
-          echo "=== Network Policies ==="
-          kubectl get networkpolicy -n token-analytics
-          echo ""
-          echo "=== Ingress ==="
-          kubectl get ingress -n token-analytics
-          echo ""
-          echo "=== Monitoring Stack ==="
-          kubectl get pods -n monitoring
-          echo ""
-          echo "=== Prometheus Targets ==="
-          kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus
-
-  # Note: When Argo CD is enabled, remove the deploy job above.
-  # Argo CD will watch git and sync automatically.
+  # ── Deployment handled by Argo CD ────────────────────────────────────────────
+  #
+  # CI only builds + pushes image tag to git. Argo CD detects the change and syncs.
+  #
+  # Flow:
+  #   Push to staging → CI updates values.yaml tag → Argo CD syncs staging
+  #   Merge to main   → CI updates values.yaml tag → Argo CD syncs production
+  #
+  # Platform services (Argo CD, ESO, monitoring) managed by:
+  #   terraform/platform/ (terraform apply)
+  #
+  # Manual operations:
+  #   argocd app list
+  #   argocd app sync token-analytics-staging
+  #   argocd app sync token-analytics-production
+  #   argocd app rollback token-analytics-production <revision>
