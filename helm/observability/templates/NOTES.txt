@@ -1,0 +1,6 @@
+Observability stack deployed:
+  - Prometheus: kubectl port-forward svc/observability-prometheus-server 9090:80 -n monitoring
+  - Grafana:    kubectl port-forward svc/observability-grafana 3001:80 -n monitoring
+                Login: admin / token-analytics-grafana
+  - Loki:       Logs available in Grafana → Explore → Loki datasource
+  - Promtail:   Shipping logs from all pods automatically
