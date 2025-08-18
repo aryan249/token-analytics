@@ -1,5 +1,3 @@
-// src/clients/db/trades.ts
-
 import type { Pool } from "pg";
 
 export interface TradeRow {
