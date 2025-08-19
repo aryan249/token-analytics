@@ -1,23 +1,104 @@
+# ── Argo CD Project — isolation boundary for token-analytics ─────────────────
 apiVersion: argoproj.io/v1alpha1
-kind: Application
+kind: AppProject
 metadata:
   name: token-analytics
   namespace: argocd
 spec:
-  project: default
-  source:
-    repoURL: https://github.com/aryan249/token-analytics.git
-    targetRevision: main
-    path: helm/token-analytics
-    helm:
-      valueFiles:
-        - values.yaml
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: token-analytics
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
+  description: Token Analytics platform — staging and production environments
+  sourceRepos:
+    - https://github.com/aryan249/token-analytics.git
+  destinations:
+    - namespace: token-analytics
+      server: https://kubernetes.default.svc
+    - namespace: token-analytics-staging
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+# ── ApplicationSet — generates one Argo CD Application per environment ───────
+#
+# How it works:
+#   - list generator defines two environments: staging + production
+#   - Each gets its own namespace, branch, values file, and sync policy
+#   - Staging: auto-syncs from feat/devops (fast iteration)
+#   - Production: auto-syncs from main (only promoted code)
+#
+# Promotion workflow:
+#   1. Developer pushes to feat/devops → CI builds image → updates values.yaml tag
+#   2. Argo CD detects git change → syncs staging automatically
+#   3. QA verifies staging
+#   4. Developer merges feat/devops → main (PR)
+#   5. Argo CD detects main change → syncs production automatically
+#
+# Drift detection:
+#   selfHeal: true — if someone kubectl edits a deployment, Argo reverts it
+#   within 3 minutes (default sync interval)
+#
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: token-analytics
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - env: staging
+            namespace: token-analytics-staging
+            branch: staging
+            valuesFile: values-staging.yaml
+            autoSync: true
+          - env: production
+            namespace: token-analytics
+            branch: main
+            valuesFile: values-production.yaml
+            autoSync: true
+  template:
+    metadata:
+      name: "token-analytics-{{env}}"
+      namespace: argocd
+      labels:
+        app.kubernetes.io/part-of: token-analytics
+        environment: "{{env}}"
+    spec:
+      project: token-analytics
+      source:
+        repoURL: https://github.com/aryan249/token-analytics.git
+        targetRevision: "{{branch}}"
+        path: helm/token-analytics
+        helm:
+          valueFiles:
+            - values.yaml
+            - "{{valuesFile}}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{namespace}}"
+      syncPolicy:
+        automated:
+          prune: true       # Delete resources removed from git
+          selfHeal: true    # Revert manual kubectl changes
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+          - ServerSideApply=true
+        retry:
+          limit: 3
+          backoff:
+            duration: 30s
+            factor: 2
+            maxDuration: 3m
+      # Ignore differences that K8s controllers set automatically
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          jsonPointers:
+            - /spec/replicas  # HPA manages this
+        - group: autoscaling
+          kind: HorizontalPodAutoscaler
+          jsonPointers:
+            - /spec/metrics
