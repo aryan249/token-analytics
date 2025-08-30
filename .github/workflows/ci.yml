@@ -13,10 +13,11 @@ concurrency:
 env:
   AWS_REGION: ap-south-1
   AWS_ACCOUNT_ID: "692046684301"
-  AWS_PROFILE: token-analytics-new
   ECR_REGISTRY: 692046684301.dkr.ecr.ap-south-1.amazonaws.com
   ECR_REPOSITORY: token-analytics
   NODE_VERSION: "20"
+  # OIDC — no secrets, no keys. GitHub mints a JWT, AWS verifies it.
+  ROLE_ARN: arn:aws:iam::692046684301:role/token-analytics-github-actions-role
 
 jobs:
   # ── Runs on EVERY push AND every PR ────────────────────────────────────────
@@ -57,8 +58,17 @@ jobs:
     needs: lint-build-test
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/feat/indexer-pipeline')
     runs-on: self-hosted
+    permissions:
+      id-token: write    # Required for OIDC token
+      contents: read
     steps:
       - uses: actions/checkout@v4.1.7
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Determine environment tag
         id: env-tag

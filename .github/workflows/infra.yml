@@ -19,6 +19,8 @@ on:
 env:
   AWS_REGION: ap-south-1
   TF_WORKING_DIR: terraform
+  # OIDC — no secrets, no keys. GitHub mints a JWT, AWS verifies it.
+  ROLE_ARN: arn:aws:iam::692046684301:role/token-analytics-github-terraform-role
 
 jobs:
   terraform:
@@ -27,16 +29,17 @@ jobs:
       run:
         working-directory: ${{ env.TF_WORKING_DIR }}
     permissions:
-      id-token: write
+      id-token: write   # Required for OIDC token
       contents: read
       pull-requests: write
 
     steps:
       - uses: actions/checkout@v4
 
-      # Self-hosted runner uses EC2 instance IAM role — no secrets needed
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
+          role-to-assume: ${{ env.ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: hashicorp/setup-terraform@v3
@@ -87,4 +90,3 @@ jobs:
         env:
           TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
           TF_VAR_github_runner_token: ${{ secrets.RUNNER_TOKEN }}
-
