@@ -27,19 +27,22 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
 
       -- ── Token registry ──────────────────────────────────────────────────────
       CREATE TABLE IF NOT EXISTS token_registry (
-        token_address    TEXT         PRIMARY KEY,
-        pool_id          TEXT         NOT NULL,
-        creator          TEXT         NOT NULL,
-        nft_id           BIGINT       NOT NULL,
-        pm_address       TEXT         NOT NULL,
-        total_supply     NUMERIC,
-        name             TEXT,
-        symbol           TEXT,
-        discovered_block BIGINT       NOT NULL,
-        discovered_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+        token_address     TEXT         PRIMARY KEY,
+        pool_id           TEXT         NOT NULL,
+        creator           TEXT         NOT NULL,
+        nft_id            BIGINT       NOT NULL,
+        pm_address        TEXT         NOT NULL,
+        total_supply      NUMERIC,
+        name              TEXT,
+        symbol            TEXT,
+        description       TEXT,
+        website           TEXT,
+        twitter           TEXT,
+        telegram          TEXT,
+        initial_price_eth NUMERIC,
+        discovered_block  BIGINT       NOT NULL,
+        discovered_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
       );
-      ALTER TABLE token_registry ADD COLUMN IF NOT EXISTS name   TEXT;
-      ALTER TABLE token_registry ADD COLUMN IF NOT EXISTS symbol TEXT;
       CREATE INDEX IF NOT EXISTS idx_token_registry_pool
         ON token_registry (pool_id);
 
@@ -57,18 +60,13 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
         price_eth        NUMERIC      NOT NULL,
         price_usd        NUMERIC,
         is_buy           BOOLEAN      NOT NULL,
+        sender           TEXT,
+        recipient        TEXT,
+        fee_eth          NUMERIC,
+        phase            TEXT,
         chain_id         INTEGER      NOT NULL,
         indexed_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
       );
-      -- Make previously NOT NULL columns optional (safe to run repeatedly)
-      ALTER TABLE trades ALTER COLUMN sender      DROP NOT NULL;
-      ALTER TABLE trades ALTER COLUMN recipient   DROP NOT NULL;
-      ALTER TABLE trades ALTER COLUMN fee_eth     DROP NOT NULL;
-      ALTER TABLE trades ALTER COLUMN phase       DROP NOT NULL;
-      ALTER TABLE trades ADD COLUMN IF NOT EXISTS sender      TEXT;
-      ALTER TABLE trades ADD COLUMN IF NOT EXISTS recipient   TEXT;
-      ALTER TABLE trades ADD COLUMN IF NOT EXISTS fee_eth     NUMERIC;
-      ALTER TABLE trades ADD COLUMN IF NOT EXISTS phase       TEXT;
       CREATE INDEX IF NOT EXISTS idx_trades_token
         ON trades (token_address, block_timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_trades_block
@@ -90,7 +88,7 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_candles_lookup
         ON candles (token_address, resolution, bucket_time DESC);
 
-      -- ── Positions (WAC) ─────────────────────────────────────────────────────
+      -- ── Positions (weighted average cost) ─────────────────────────────────
       CREATE TABLE IF NOT EXISTS positions (
         wallet_address   TEXT        NOT NULL,
         token_address    TEXT        NOT NULL,
@@ -103,7 +101,7 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_positions_wallet
         ON positions (wallet_address);
 
-      -- ── Fee distributions ───────────────────────────────────────────────────
+      -- ── Fee distributions ──────────────────────────────────────────────────
       CREATE TABLE IF NOT EXISTS fee_distributions (
         id                TEXT         PRIMARY KEY,
         block_number      BIGINT       NOT NULL,
@@ -118,18 +116,10 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
         protocol_amount   NUMERIC      NOT NULL DEFAULT 0,
         chain_id          INTEGER      NOT NULL
       );
-      -- Drop old NOT NULL constraint on fee_receiver if it exists
-      ALTER TABLE fee_distributions ALTER COLUMN fee_receiver DROP NOT NULL;
-      -- Add new columns
-      ALTER TABLE fee_distributions ADD COLUMN IF NOT EXISTS donate_amount     NUMERIC NOT NULL DEFAULT 0;
-      ALTER TABLE fee_distributions ADD COLUMN IF NOT EXISTS creator_amount    NUMERIC NOT NULL DEFAULT 0;
-      ALTER TABLE fee_distributions ADD COLUMN IF NOT EXISTS bid_wall_amount   NUMERIC NOT NULL DEFAULT 0;
-      ALTER TABLE fee_distributions ADD COLUMN IF NOT EXISTS governance_amount NUMERIC NOT NULL DEFAULT 0;
-      ALTER TABLE fee_distributions ADD COLUMN IF NOT EXISTS protocol_amount   NUMERIC NOT NULL DEFAULT 0;
       CREATE INDEX IF NOT EXISTS idx_fee_distributions_token
         ON fee_distributions (token_address, block_timestamp DESC);
 
-      -- ── Fee escrow withdrawals ───────────────────────────────────────────────
+      -- ── Fee escrow withdrawals ─────────────────────────────────────────────
       CREATE TABLE IF NOT EXISTS fee_escrow_withdrawals (
         id              TEXT         PRIMARY KEY,
         block_number    BIGINT       NOT NULL,
@@ -144,7 +134,17 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_fee_escrow_withdrawals_recipient
         ON fee_escrow_withdrawals (recipient, block_timestamp DESC);
 
-      -- ── Dynamic manager registry ─────────────────────────────────────────────
+      -- ── Royalty members ────────────────────────────────────────────────────
+      CREATE TABLE IF NOT EXISTS royalty_members (
+        token_address TEXT     NOT NULL,
+        recipient     TEXT     NOT NULL,
+        share         NUMERIC  NOT NULL,
+        PRIMARY KEY (token_address, recipient)
+      );
+      CREATE INDEX IF NOT EXISTS idx_royalty_members_token
+        ON royalty_members (token_address);
+
+      -- ── Dynamic manager registry ───────────────────────────────────────────
       CREATE TABLE IF NOT EXISTS dynamic_managers (
         manager_address  TEXT         PRIMARY KEY,
         implementation   TEXT         NOT NULL,
@@ -153,7 +153,36 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
         discovered_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
       );
 
-      -- ── Fair launch info ─────────────────────────────────────────────────────
+      -- ── Holder balances ────────────────────────────────────────────────────
+      CREATE TABLE IF NOT EXISTS holder_balances (
+        token_address TEXT    NOT NULL,
+        wallet        TEXT    NOT NULL,
+        balance       NUMERIC NOT NULL DEFAULT 0,
+        updated_block BIGINT  NOT NULL DEFAULT 0,
+        PRIMARY KEY (token_address, wallet)
+      );
+      CREATE INDEX IF NOT EXISTS idx_holder_balances_wallet
+        ON holder_balances (wallet);
+      CREATE INDEX IF NOT EXISTS idx_holder_balances_token_bal
+        ON holder_balances (token_address, balance DESC);
+
+      -- ── Processed transfer events (idempotency) ───────────────────────────
+      CREATE TABLE IF NOT EXISTS processed_transfer_events (
+        event_id TEXT PRIMARY KEY
+      );
+
+      -- ── Pool state ─────────────────────────────────────────────────────────
+      CREATE TABLE IF NOT EXISTS pool_state (
+        pool_id         TEXT    PRIMARY KEY,
+        token_address   TEXT    NOT NULL,
+        liquidity       NUMERIC NOT NULL DEFAULT 0,
+        sqrt_price_x96  NUMERIC NOT NULL DEFAULT 0,
+        updated_block   BIGINT  NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_pool_state_token
+        ON pool_state (token_address);
+
+      -- ── Fair launch info ───────────────────────────────────────────────────
       CREATE TABLE IF NOT EXISTS fair_launch_info (
         pool_id        TEXT         PRIMARY KEY,
         tokens         NUMERIC      NOT NULL,
