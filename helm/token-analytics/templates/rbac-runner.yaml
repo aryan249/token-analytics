@@ -1,5 +1,4 @@
-# Read-only ClusterRole for CI runner — can list/get pods, services, ingress
-# but CANNOT create, update, delete, or exec into pods.
+# CI runner RBAC — strictly read-only. Cannot deploy, patch, or modify anything.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -25,3 +24,6 @@ rules:
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list"]

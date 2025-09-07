@@ -33,14 +33,6 @@ metadata:
   labels:
     app.kubernetes.io/part-of: token-analytics
     environment: production
-  annotations:
-    # Image Updater watches ECR and auto-updates the image tag
-    argocd-image-updater.argoproj.io/image-list: app=207270671706.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
-    argocd-image-updater.argoproj.io/app.update-strategy: latest
-    argocd-image-updater.argoproj.io/app.sort-mode: date
-    argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
-    argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
-    argocd-image-updater.argoproj.io/write-back-method: argocd
 spec:
   project: token-analytics
   source:
