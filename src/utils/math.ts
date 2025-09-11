@@ -1,15 +1,30 @@
-import type { CandleResolution, Position } from "../types/events";
-import { Q96, WAD, CANDLE_SECONDS, ALL_RESOLUTIONS } from "./constants";
+import type { CandleResolution } from "../types/events";
+import { WAD, CANDLE_SECONDS, ALL_RESOLUTIONS } from "./constants";
 
 export { ALL_RESOLUTIONS };
 
-export function sqrtPriceX96ToEthPrice(sqrtPriceX96: bigint): bigint {
-  if (sqrtPriceX96 === 0n) return 0n;
-  return (sqrtPriceX96 * sqrtPriceX96 * WAD) / (Q96 * Q96);
+export function weiToEth(wei: string | bigint | null | undefined): string | null {
+  if (wei == null) return null;
+  try {
+    const n = typeof wei === "bigint" ? wei : BigInt(wei);
+    if (n === 0n) return "0";
+    const whole = n / WAD;
+    const frac  = n % WAD;
+    if (frac === 0n) return whole.toString();
+    return `${whole}.${frac.toString().padStart(18, "0").replace(/0+$/, "")}`;
+  } catch { return null; }
+}
+
+export function bigIntReviver(_k: string, v: unknown): unknown {
+  return typeof v === "string" && /^-?\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v;
 }
 
 export function ethPriceToUsd(priceEthWad: bigint, ethUsdRate: bigint): number {
-  return Number(priceEthWad * ethUsdRate) / Number(WAD * 10n ** 8n);
+  // Divide in BigInt land first to avoid overflow past Number.MAX_SAFE_INTEGER
+  const SCALE = WAD * 10n ** 8n;
+  const whole = (priceEthWad * ethUsdRate) / SCALE;
+  const remainder = (priceEthWad * ethUsdRate) % SCALE;
+  return Number(whole) + Number(remainder) / Number(SCALE);
 }
 
 /** Format a USD value as a string — uses full precision (scientific notation for tiny values). */
@@ -29,31 +44,3 @@ export function getBucketTime(blockTimestamp: bigint, resolution: CandleResoluti
   return (blockTimestamp / seconds) * seconds;
 }
 
-export function applyTradeToPosition(
-  existing:      Position | null,
-  walletAddress: string,
-  tokenAddress:  string,
-  isBuy:         boolean,
-  tokenAmount:   bigint,
-  ethAmount:     bigint,
-): Position {
-  const prev: Position = existing ?? {
-    walletAddress, tokenAddress, balance: 0n, costBasisEth: 0n, realizedPnlEth: 0n,
-  };
-
-  if (isBuy) {
-    return { ...prev, balance: prev.balance + tokenAmount, costBasisEth: prev.costBasisEth + ethAmount };
-  }
-
-  if (prev.balance === 0n) return prev;
-
-  const sold       = tokenAmount > prev.balance ? prev.balance : tokenAmount;
-  const costOfSold = prev.balance > 0n ? (prev.costBasisEth * sold) / prev.balance : 0n;
-
-  return {
-    ...prev,
-    balance:        prev.balance - sold,
-    costBasisEth:   prev.costBasisEth - costOfSold,
-    realizedPnlEth: prev.realizedPnlEth + (ethAmount - costOfSold),
-  };
-}

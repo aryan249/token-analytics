@@ -19,6 +19,19 @@ function apiFetch(url) {
   });
 }
 
+// ── Sanitization ─────────────────────────────────────────────────────────────
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function safeHref(url) {
+  if (!url) return '';
+  try { const u = new URL(url, location.origin); return (u.protocol === 'https:' || u.protocol === 'http:') ? esc(url) : ''; }
+  catch { return ''; }
+}
+
 // ── Utilities ────────────────────────────────────────────────────────────────
 
 function formatUsd(v) {
@@ -218,8 +231,8 @@ function renderTokenRow(t) {
     <div class="coin-cell">
       <img class="coin-img" src="${t.image}" alt="" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><circle cx=%2220%22 cy=%2220%22 r=%2220%22 fill=%22%2327272a%22/></svg>'">
       <div class="coin-info">
-        <div class="coin-name">${t.name || '???'}</div>
-        <div class="coin-symbol">${t.symbol || '???'}</div>
+        <div class="coin-name">${esc(t.name) || '???'}</div>
+        <div class="coin-symbol">${esc(t.symbol) || '???'}</div>
       </div>
     </div>
     <div class="sparkline-cell">
@@ -345,7 +358,7 @@ function showActivityToast(data) {
   toast.innerHTML = `
     <span class="badge ${isBuy ? 'badge-buy' : 'badge-sell'}">${isBuy ? 'BUY' : 'SELL'}</span>
     <span style="color:#71717a">${shortenAddr(data.maker)}</span>
-    <span style="font-weight:600">${data.coin?.symbol || '???'}</span>
+    <span style="font-weight:600">${esc(data.coin?.symbol) || '???'}</span>
     <span style="color:#a1a1aa">${formatUsd(data.amountUSD)}</span>
   `;
   feed.appendChild(toast);
@@ -409,9 +422,9 @@ function renderTokenHeader(t) {
   let socialHtml = '';
   if (t.website || t.twitter || t.telegram) {
     socialHtml = '<div class="social-links">';
-    if (t.website) socialHtml += `<a href="${t.website}" target="_blank">Website</a>`;
-    if (t.twitter) socialHtml += `<a href="https://x.com/${t.twitter}" target="_blank">Twitter</a>`;
-    if (t.telegram) socialHtml += `<a href="https://t.me/${t.telegram}" target="_blank">Telegram</a>`;
+    if (t.website) { const href = safeHref(t.website); if (href) socialHtml += `<a href="${href}" target="_blank" rel="noopener">Website</a>`; }
+    if (t.twitter) socialHtml += `<a href="https://x.com/${encodeURIComponent(t.twitter)}" target="_blank" rel="noopener">Twitter</a>`;
+    if (t.telegram) socialHtml += `<a href="https://t.me/${encodeURIComponent(t.telegram)}" target="_blank" rel="noopener">Telegram</a>`;
     socialHtml += '</div>';
   }
 
@@ -419,7 +432,7 @@ function renderTokenHeader(t) {
     <div class="th-main">
       <img class="th-img" src="${t.image}" alt="" onerror="this.style.display='none'">
       <div class="th-info">
-        <h2>${t.name || '???'}<span>${t.symbol || ''}</span></h2>
+        <h2>${esc(t.name) || '???'}<span>${esc(t.symbol) || ''}</span></h2>
         <div class="th-price-big" id="live-price">${formatUsdFull(t.priceUSD)}</div>
         ${socialHtml}
       </div>
@@ -433,7 +446,7 @@ function renderTokenHeader(t) {
       ${t.fairLaunch ? '<div class="th-stat"><div class="th-stat-label">Fair Launch</div><div class="th-stat-value" style="color:#a78bfa">Active</div></div>' : ''}
     </div>
   `;
-  document.title = `${t.symbol || t.name} - FLaunch Analytics`;
+  document.title = `${esc(t.symbol || t.name)} - FLaunch Analytics`;
 }
 
 function initChart() {
