@@ -15,7 +15,7 @@
 #   terraform apply -var="eks_cluster_name=token-analytics"
 
 terraform {
-  required_version = ">= 1.5"
+  required_version = ">= 1.5, < 2.0"
 
   required_providers {
     aws = {
@@ -33,7 +33,7 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "token-analytics-tfstate"
+    bucket         = "token-analytics-tfstate-692046684301"
     key            = "platform/terraform.tfstate"
     region         = "ap-south-1"
     dynamodb_table = "terraform-locks"

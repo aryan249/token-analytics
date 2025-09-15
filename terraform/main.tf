@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.5"
+  required_version = ">= 1.5, < 2.0"
 
   required_providers {
     aws = {
@@ -11,7 +11,7 @@ terraform {
   # Backend config cannot use variables — values are hardcoded here.
   # To change, update and run: terraform init -reconfigure
   backend "s3" {
-    bucket         = "token-analytics-tfstate"
+    bucket         = "token-analytics-tfstate-692046684301"
     key            = "infra/terraform.tfstate"
     region         = "ap-south-1"
     dynamodb_table = "terraform-locks"

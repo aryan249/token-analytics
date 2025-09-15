@@ -61,7 +61,7 @@ api:
 # Staging uses a separate secrets path
 externalSecrets:
   region: ap-south-1
-  roleArn: "arn:aws:iam::207270671706:role/token-analytics-external-secrets-role"
+  roleArn: "arn:aws:iam::692046684301:role/token-analytics-external-secrets-role"
   secretName: "token-analytics/staging-secrets"
 
 ingress:

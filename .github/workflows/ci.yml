@@ -8,8 +8,8 @@ on:
 
 env:
   AWS_REGION: ap-south-1
-  AWS_ACCOUNT_ID: "207270671706"
-  ECR_REGISTRY: 207270671706.dkr.ecr.ap-south-1.amazonaws.com
+  AWS_ACCOUNT_ID: "692046684301"
+  ECR_REGISTRY: 692046684301.dkr.ecr.ap-south-1.amazonaws.com
   ECR_REPOSITORY: token-analytics
   EKS_CLUSTER: token-analytics
   NAMESPACE: token-analytics

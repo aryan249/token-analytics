@@ -10,8 +10,11 @@ x-common: &common
   env_file: .env
   environment:
     POSTGRES_URL: postgresql://postgres:${POSTGRES_PASSWORD:-localdev}@postgres:5432/flaunch
-    REDIS_URL:    redis://redis:6379
-    NODE_ENV:     development
+    REDIS_URL: redis://redis:6379
+    NODE_ENV: development
+  volumes:
+    - ./src:/app/src
+    - ./dist:/app/dist
   restart: unless-stopped
   logging:
     driver: json-file
@@ -26,18 +29,18 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB:       flaunch
-      POSTGRES_USER:     postgres
+      POSTGRES_DB: flaunch
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test:     ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
-      timeout:  5s
-      retries:  10
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -46,16 +49,16 @@ services:
     volumes:
       - redisdata:/data
     healthcheck:
-      test:     ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
-      timeout:  5s
-      retries:  10
+      timeout: 5s
+      retries: 10
 
   # ── Indexer ─────────────────────────────────────────────────────────────────
 
   indexer:
     <<: *common
-    command: ["npx", "node", "dist/indexer/main.js"]
+    command: ["node", "dist/indexer/main.js"]
     logging:
       driver: json-file
       options:
@@ -66,41 +69,46 @@ services:
 
   processor-trade:
     <<: *common
-    command: ["npx", "node", "dist/processors/trade.js"]
+    command: ["node", "dist/processors/trade.js"]
 
   processor-token:
     <<: *common
-    command: ["npx", "node", "dist/processors/token.js"]
+    command: ["node", "dist/processors/token.js"]
 
   processor-candle:
     <<: *common
-    command: ["npx", "node", "dist/processors/candle.js"]
+    command: ["node", "dist/processors/candle.js"]
 
   processor-position:
     <<: *common
-    command: ["npx", "node", "dist/processors/position.js"]
+    command: ["node", "dist/processors/position.js"]
 
   processor-fees:
     <<: *common
-    command: ["npx", "node", "dist/processors/fees.js"]
+    command: ["node", "dist/processors/fees.js"]
 
   processor-price:
     <<: *common
-    command: ["npx", "node", "dist/processors/price.js"]
+    command: ["node", "dist/processors/price.js"]
 
   # ── API + WebSocket ─────────────────────────────────────────────────────────
 
   api:
     <<: *common
-    command: ["npx", "node", "dist/api/server.js"]
+    command: ["node", "dist/api/server.js"]
     environment:
       POSTGRES_URL: postgresql://postgres:${POSTGRES_PASSWORD:-localdev}@postgres:5432/flaunch
-      REDIS_URL:    redis://redis:6379
-      API_PORT:     "3000"
-      NODE_ENV:     development
+      REDIS_URL: redis://redis:6379
+      API_PORT: "3000"
+      NODE_ENV: development
     ports:
       - "3000:3000"
 
 volumes:
   pgdata:
   redisdata:
+
+# Hot reload workflow:
+#   1. Run: npx tsc --watch     (in terminal 1 — compiles src/ → dist/ on save)
+#   2. Run: docker compose up   (in terminal 2 — mounts dist/ into containers)
+#   3. Edit src/ → tsc recompiles → containers see new dist/ → restart with: docker compose restart <service>

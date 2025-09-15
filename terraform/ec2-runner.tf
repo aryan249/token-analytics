@@ -73,7 +73,7 @@ resource "aws_cloudwatch_metric_alarm" "runner_status_check" {
   alarm_name          = "${var.project}-runner-status-check"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
-  metric_name         = "StatusCheckFailed"
+  metric_name         = "StatusCheckFailed_System"
   namespace           = "AWS/EC2"
   period              = 60
   statistic           = "Maximum"

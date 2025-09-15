@@ -43,15 +43,8 @@ resource "aws_elasticache_parameter_group" "redis" {
   name   = "${var.project}-redis-params"
   family = "redis7"
 
-  parameter {
-    name  = "appendonly"
-    value = "yes"
-  }
-
-  parameter {
-    name  = "appendfsync"
-    value = "everysec" # fsync every second — max 1s data loss on crash, good perf
-  }
+  # Note: appendonly/appendfsync cannot be modified on cache.t3.micro after creation.
+  # AOF is set at cluster creation time. To enable, destroy + recreate the cluster.
 
   tags = { Name = "${var.project}-redis-params" }
 }
