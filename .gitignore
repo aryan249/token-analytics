@@ -6,7 +6,11 @@ dump.rdb
 
 # Terraform
 terraform/.terraform/
+terraform/**/.terraform/
 terraform/*.tfstate
+terraform/**/*.tfstate
 terraform/*.tfstate.backup
-terraform/*.tfvars
+terraform/**/*.tfstate.backup
 terraform/.terraform.lock.hcl
+# Secret tfvars — never commit. Use TF_VAR_* env vars instead.
+terraform/*.secret.tfvars

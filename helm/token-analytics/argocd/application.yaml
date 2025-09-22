@@ -13,6 +13,8 @@ spec:
       server: https://kubernetes.default.svc
     - namespace: token-analytics-staging
       server: https://kubernetes.default.svc
+    - namespace: monitoring
+      server: https://kubernetes.default.svc
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
@@ -111,3 +113,34 @@ spec:
         duration: 30s
         factor: 2
         maxDuration: 3m
+---
+# ── Observability Application (Prometheus + Grafana + Loki + Promtail) ───────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: token-analytics
+spec:
+  project: token-analytics
+  source:
+    repoURL: https://github.com/aryan249/token-analytics.git
+    targetRevision: feat/argocd-gitops
+    path: helm/observability
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

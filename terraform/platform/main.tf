@@ -46,9 +46,19 @@ variable "aws_region" {
   default = "ap-south-1"
 }
 
+variable "aws_account_id" {
+  type    = string
+  default = "207270671706"
+}
+
 variable "eks_cluster_name" {
   type    = string
   default = "token-analytics"
+}
+
+variable "argocd_version" {
+  type    = string
+  default = "7.7.8"
 }
 
 provider "aws" {

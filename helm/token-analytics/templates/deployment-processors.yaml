@@ -39,7 +39,7 @@ spec:
             {{- toYaml $.Values.podDefaults.containerSecurity | nindent 12 }}
           volumeMounts:
             - name: tmp
-              mountPath: /tmp
+              mountPath: {{ $.Values.podDefaults.tmpMountPath }}
           lifecycle:
             preStop:
               exec:
@@ -52,21 +52,15 @@ spec:
           startupProbe:
             exec:
               command: ["node", "-e", "setTimeout(()=>process.exit(0),0)"]
-            failureThreshold: 12
-            periodSeconds: 5
+            {{- toYaml $.Values.probes.processors.startup | nindent 12 }}
           readinessProbe:
             exec:
-              command: ["node", "-e", "try{require('fs').accessSync('/tmp/processor-ready');process.exit(0)}catch{process.exit(1)}"]
-            initialDelaySeconds: 15
-            periodSeconds: 15
-            timeoutSeconds: 3
+              command: ["node", "-e", "try{require('fs').accessSync('{{ $.Values.podDefaults.tmpMountPath }}/processor-ready');process.exit(0)}catch{process.exit(1)}"]
+            {{- toYaml $.Values.probes.processors.readiness | nindent 12 }}
           livenessProbe:
             exec:
-              command: ["node", "-e", "try{const s=require('fs').statSync('/tmp/processor-alive');process.exit(Date.now()-s.mtimeMs<120000?0:1)}catch{process.exit(1)}"]
-            initialDelaySeconds: 20
-            periodSeconds: 30
-            failureThreshold: 3
-            timeoutSeconds: 5
+              command: ["node", "-e", "try{const s=require('fs').statSync('{{ $.Values.podDefaults.tmpMountPath }}/processor-alive');process.exit(Date.now()-s.mtimeMs<{{ $.Values.probes.processors.stalenessMs }}?0:1)}catch{process.exit(1)}"]
+            {{- toYaml $.Values.probes.processors.liveness | nindent 12 }}
       volumes:
         - name: tmp
           emptyDir: {}
