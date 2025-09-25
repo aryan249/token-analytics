@@ -7,7 +7,7 @@ import { logger } from "../utils/logger";
 import type { DecodedEvent } from "../types/events";
 
 function bigIntReviver(_k: string, v: unknown): unknown {
-  return typeof v === "string" && /^\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v;
+  return typeof v === "string" && /^-?\d+n$/.test(v) ? BigInt(v.slice(0, -1)) : v;
 }
 
 export abstract class BaseProcessor {
@@ -42,13 +42,20 @@ export abstract class BaseProcessor {
     sub.on("reconnecting", ()    => logger.warn("Redis subscriber reconnecting"));
     await sub.connect();
 
-    await sub.subscribe(this.channel, async (message) => {
-      try {
-        const event = JSON.parse(message, bigIntReviver) as DecodedEvent;
-        await this.handle(event);
-      } catch (err) {
-        logger.error({ err, channel: this.channel }, "Processor handle error");
-      }
+    // Serialize message processing: node-redis does not await async callbacks,
+    // so we chain onto a promise queue to guarantee in-order, sequential handling.
+    // Without this, a slow PoolCreated handler (fetchTokenMetadata RPC call) can
+    // let ManagerInitializedFeeSplit run before recentTxTokens is populated.
+    let queue = Promise.resolve();
+    sub.subscribe(this.channel, (message) => {
+      queue = queue.then(async () => {
+        try {
+          const event = JSON.parse(message, bigIntReviver) as DecodedEvent;
+          await this.handle(event);
+        } catch (err) {
+          logger.error({ err, channel: this.channel }, "Processor handle error");
+        }
+      });
     });
 
     logger.info({ channel: this.channel }, "Processor subscribed and waiting");

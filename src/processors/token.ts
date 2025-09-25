@@ -1,65 +1,111 @@
-// src/processors/token.ts
-
 import "dotenv/config";
 import { createPublicClient, http, type Address } from "viem";
 import { base }                                   from "viem/chains";
-import { registerToken }                          from "../utils/db/tokens";
+import { registerToken, upsertRoyaltyMembers }    from "../utils/db/tokens";
 import { EVENT_CHANNELS }                         from "../clients/redis";
 import { ERC20_METADATA_ABI }                     from "../abis/abis";
 import { BaseProcessor }                          from "./base-processor";
 import { logger }                                 from "../utils/logger";
-import type { DecodedEvent, PoolCreatedEvent }    from "../types/events";
+import type { DecodedEvent, PoolCreatedEvent, ManagerInitializedFeeSplitEvent } from "../types/events";
 
 const rpcUrl = (process.env.ALCHEMY_WS_URL ?? "").replace(/^wss?:\/\//, "https://");
 const rpcClient = createPublicClient({ chain: base, transport: http(rpcUrl) });
 
 async function fetchTokenMetadata(
   tokenAddress: Address,
-): Promise<{ name: string | null; symbol: string | null }> {
+): Promise<{ name: string | null; symbol: string | null; totalSupply: bigint | null }> {
   try {
-    const [name, symbol] = await Promise.all([
+    const [name, symbol, totalSupply] = await Promise.all([
       rpcClient.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "name" }),
       rpcClient.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "symbol" }),
+      rpcClient.readContract({ address: tokenAddress, abi: ERC20_METADATA_ABI, functionName: "totalSupply" }),
     ]);
-    return { name: name as string, symbol: symbol as string };
+    return { name: name as string, symbol: symbol as string, totalSupply: totalSupply as bigint };
   } catch (err) {
     logger.warn({ err, token: tokenAddress }, "Could not fetch token metadata");
-    return { name: null, symbol: null };
+    return { name: null, symbol: null, totalSupply: null };
   }
 }
 
 class TokenProcessor extends BaseProcessor {
   get channel() { return EVENT_CHANNELS.meta; }
 
+  // txHash → tokenAddress for royalty linking (same transaction)
+  private recentTxTokens = new Map<string, string>();
+
   async handle(event: DecodedEvent): Promise<void> {
-    if (event.eventType !== "PoolCreated") return;
-    const e = event as PoolCreatedEvent;
+    if (event.eventType === "PoolCreated") {
+      const e = event as PoolCreatedEvent;
 
-    // Use name/symbol from event params for v1/v1.1 PMs; fallback to on-chain call for AnyPM
-    let name   = e.name   || null;
-    let symbol = e.symbol || null;
+      let name   = e.name   || null;
+      let symbol = e.symbol || null;
+      let totalSupply: bigint | null = null;
 
-    if (!name || !symbol) {
-      const meta = await fetchTokenMetadata(e.tokenAddress);
-      name   = name   ?? meta.name;
-      symbol = symbol ?? meta.symbol;
+      if (!name || !symbol) {
+        const meta = await fetchTokenMetadata(e.tokenAddress);
+        name        = name   ?? meta.name;
+        symbol      = symbol ?? meta.symbol;
+        totalSupply = meta.totalSupply;
+      } else {
+        const meta = await fetchTokenMetadata(e.tokenAddress);
+        totalSupply = meta.totalSupply;
+      }
+
+      await registerToken(this.pool, {
+        tokenAddress:    e.tokenAddress,
+        poolId:          e.poolId,
+        creator:         e.creator,
+        nftId:           e.tokenId,
+        pmAddress:       e.contractAddress,
+        discoveredBlock: e.blockNumber,
+        name,
+        symbol,
+        totalSupply:     totalSupply ?? undefined,
+      });
+
+      // Publish resolved metadata so the WS gateway can update its tokenMetaMap
+      // (totalSupply is fetched via RPC, not present in the original PoolCreated event)
+      await this.publisher.publish(EVENT_CHANNELS.meta, JSON.stringify({
+        eventType:   "TokenMetaUpdated",
+        tokenAddress: e.tokenAddress,
+        name,
+        symbol,
+        totalSupply:  totalSupply != null ? totalSupply.toString() + "n" : null,
+      }));
+
+      // Cache txHash so ManagerInitializedFeeSplit (same tx) can link to this token
+      this.recentTxTokens.set(e.transactionHash, e.tokenAddress.toLowerCase());
+      if (this.recentTxTokens.size > 1000) {
+        // Evict oldest entry
+        this.recentTxTokens.delete(this.recentTxTokens.keys().next().value!);
+      }
+
+      logger.info(
+        { token: e.tokenAddress, name, symbol, creator: e.creator, pmVersion: e.pmVersion },
+        "Token registered"
+      );
+      return;
     }
 
-    await registerToken(this.pool, {
-      tokenAddress:    e.tokenAddress,
-      poolId:          e.poolId,
-      creator:         e.creator,
-      nftId:           e.tokenId,
-      pmAddress:       e.contractAddress,
-      discoveredBlock: e.blockNumber,
-      name,
-      symbol,
-    });
+    if (event.eventType === "ManagerInitializedFeeSplit") {
+      const e = event as ManagerInitializedFeeSplitEvent;
+      if (!e.recipientShares.length) return;
 
-    logger.info(
-      { token: e.tokenAddress, name, symbol, creator: e.creator, pmVersion: e.pmVersion },
-      "Token registered"
-    );
+      const tokenAddress = this.recentTxTokens.get(e.transactionHash);
+      if (!tokenAddress) {
+        logger.warn(
+          { tx: e.transactionHash, manager: e.contractAddress },
+          "ManagerInitializedFeeSplit: no matching PoolCreated in same tx — fee split manager was set after token creation; royalty_members not updated"
+        );
+        return;
+      }
+
+      await upsertRoyaltyMembers(this.pool, tokenAddress, e.recipientShares);
+      logger.info(
+        { token: tokenAddress, members: e.recipientShares.length },
+        "Royalty members stored"
+      );
+    }
   }
 }
 
