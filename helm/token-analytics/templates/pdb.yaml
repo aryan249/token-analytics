@@ -31,7 +31,6 @@ metadata:
   name: processor-{{ $name }}-pdb
   namespace: {{ $.Values.namespace }}
 spec:
-  minAvailable: 0
   maxUnavailable: 1
   selector:
     matchLabels:
