@@ -50,6 +50,12 @@ export abstract class BaseProcessor {
       if (this.running) this.claimLoop().catch(() => {});
     });
 
+    // Signal readiness + liveness to K8s probes via /tmp files
+    const fs = await import("fs");
+    fs.writeFileSync("/tmp/processor-ready", "");
+    setInterval(() => { try { fs.writeFileSync("/tmp/processor-alive", ""); } catch {} }, 30_000);
+    fs.writeFileSync("/tmp/processor-alive", "");
+
     logger.info(
       { stream: this.channel, group: this.groupName, consumer: this.consumerName },
       "Processor listening on stream",

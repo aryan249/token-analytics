@@ -2,18 +2,17 @@ name: CI/CD
 
 on:
   push:
-    branches: [main, feat/*]
+    branches: [main, staging, feat/*]
   pull_request:
-    branches: [main]
+    branches: [main, staging]
 
 env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: token-analytics
-  EKS_CLUSTER: token-analytics
   IMAGE_TAG: ${{ github.sha }}
 
 jobs:
-  lint-and-build:
+  lint-build-test:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4.1.7
@@ -25,6 +24,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Lint
+        run: npx eslint src/ --max-warnings 0 || true
+
       - name: Type check
         run: |
           npx tsc --noEmit 2>&1 | grep -v "node_modules/" > /tmp/tsc-out.txt || true
@@ -33,9 +35,15 @@ jobs:
             exit 1
           fi
 
+      - name: Unit tests
+        run: npm test
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high || true
+
   docker-build-push:
-    needs: lint-and-build
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/devops'
+    needs: lint-build-test
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || startsWith(github.ref, 'refs/heads/feat/')
     runs-on: self-hosted
     permissions:
       contents: write
@@ -45,16 +53,25 @@ jobs:
       - name: Login to ECR
         run: aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin 207270671706.dkr.ecr.$AWS_REGION.amazonaws.com
 
-      - name: Build and push Docker image
-        id: build
+      - name: Build Docker image
         run: |
           REGISTRY=207270671706.dkr.ecr.$AWS_REGION.amazonaws.com
           IMAGE=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker build -t $IMAGE .
           docker tag $IMAGE $REGISTRY/$ECR_REPOSITORY:latest
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Scan image for vulnerabilities
+        run: |
+          # Install Trivy if not present
+          which trivy || (curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin)
+          trivy image --exit-code 0 --severity HIGH,CRITICAL --no-progress $IMAGE
+        continue-on-error: true
+
+      - name: Push Docker image
+        run: |
           docker push $IMAGE
-          docker push $REGISTRY/$ECR_REPOSITORY:latest
-          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          docker push $(echo $IMAGE | sed "s/:.*/:latest/")
 
       - name: Update Helm values with new image tag
         run: |
@@ -62,56 +79,21 @@ jobs:
           sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|" helm/token-analytics/values.yaml
           sed -i "s|repository:.*|repository: $REGISTRY/$ECR_REPOSITORY|" helm/token-analytics/values.yaml
 
-      - name: Commit image tag update
+      - name: Commit and push image tag update
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add helm/token-analytics/values.yaml
-          git diff --cached --quiet || git commit -m "chore: update image tag to ${IMAGE_TAG:0:8}"
-          git push
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: update image tag to ${IMAGE_TAG:0:8}"
+          # Retry push with rebase to handle concurrent CI runs
+          git push || (git pull --rebase && git push)
 
-  deploy:
-    needs: docker-build-push
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/devops'
-    runs-on: self-hosted
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4.1.7
-        with:
-          ref: ${{ github.ref }}
-
-      - name: Pull latest (includes image tag update from previous job)
-        run: git pull --ff-only origin ${{ github.ref_name }} || true
-
-      - name: Configure kubectl
-        run: aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
-
-      - name: Install External Secrets Operator (if not present)
-        run: |
-          helm repo add external-secrets https://charts.external-secrets.io
-          helm repo update
-          helm upgrade --install external-secrets external-secrets/external-secrets \
-            --namespace external-secrets --create-namespace \
-            --set installCRDs=true \
-            --wait --timeout 5m
-
-      - name: Deploy with Helm
-        run: |
-          helm upgrade --install token-analytics helm/token-analytics \
-            --namespace token-analytics --create-namespace \
-            --set image.tag="${IMAGE_TAG}" \
-            --wait --timeout 10m
-
-      - name: Verify deployment
-        run: |
-          kubectl get pods -n token-analytics
-          kubectl get svc -n token-analytics
-          kubectl get ingress -n token-analytics
-
-      - name: Print API endpoint
-        run: |
-          echo "=== API Endpoint ==="
-          kubectl get ingress -n token-analytics -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || \
-          kubectl get svc api -n token-analytics -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || \
-          echo "Endpoint not yet available — check 'kubectl get ingress -n token-analytics'"
+  # ── No deploy job — Argo CD watches git and syncs automatically ────────────
+  #
+  # Promotion workflow:
+  #   Push to staging branch → Argo CD syncs to token-analytics-staging
+  #   Merge to main          → Argo CD syncs to token-analytics (production)
+  #
+  # Drift detection: selfHeal=true reverts manual kubectl changes within 3 min
+  # Rollback: argocd app rollback token-analytics-production <revision>
