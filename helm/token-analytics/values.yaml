@@ -107,6 +107,14 @@ api:
     maxReplicas: 6
     targetCpuUtilization: 70
     targetMemoryUtilization: 80
+    scaleUp:
+      stabilizationSeconds: 60
+      pods: 1
+      periodSeconds: 60
+    scaleDown:
+      stabilizationSeconds: 300
+      pods: 1
+      periodSeconds: 120
 
 # ── Service ───────────────────────────────────────────────────────────────────
 service:
