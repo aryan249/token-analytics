@@ -17,14 +17,27 @@ app.kubernetes.io/part-of: {{ .Chart.Name }}
 {{- define "token-analytics.securityContext" -}}
 securityContext:
   runAsNonRoot: true
-  runAsUser: 1000
-  fsGroup: 1000
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
 {{- end -}}
 
 {{- define "token-analytics.containerSecurity" -}}
 securityContext:
   allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: false
+  readOnlyRootFilesystem: true
   capabilities:
     drop: ["ALL"]
+{{- end -}}
+
+{{- define "token-analytics.antiAffinity" -}}
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app: {{ .app }}
+          topologyKey: kubernetes.io/hostname
 {{- end -}}

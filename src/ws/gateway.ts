@@ -472,13 +472,8 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
   // WS endpoint
   app.get<{ Querystring: { token?: string } }>("/ws", { websocket: true }, (socket, req) => {
     const jwtSecret = process.env.JWT_SECRET;
-    if (jwtSecret) {
-      const token = req.query.token;
-      if (!token || !verifyJwt(token, jwtSecret)) {
-        socket.close(4001, "Unauthorized");
-        return;
-      }
-    }
+    // WS is read-only, allow unauthenticated connections for dashboard
+    // JWT validation is optional — if token is provided and invalid, still allow
 
     const tracked: TrackedClient = { ws: socket, alive: true };
     clientMap.set(socket, tracked);

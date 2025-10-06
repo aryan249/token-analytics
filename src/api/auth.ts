@@ -88,11 +88,18 @@ export const authRoutes: FastifyPluginAsync<AuthOpts> = async (app, { redis, jwt
 
 export function jwtAuthHook(jwtSecret: string) {
   const PUBLIC_PATHS = new Set(["/health", "/auth/nonce", "/auth/login"]);
+  const STATIC_EXTENSIONS = new Set([".html", ".css", ".js", ".ico", ".png", ".svg", ".json"]);
 
   return async (req: FastifyRequest, reply: FastifyReply) => {
     const path = req.url.split("?")[0];
 
-    if (PUBLIC_PATHS.has(path) || path === "/ws") return;
+    // Public: health, auth, websocket, static files, root
+    if (PUBLIC_PATHS.has(path) || path === "/ws" || path === "/") return;
+    const ext = path.substring(path.lastIndexOf("."));
+    if (STATIC_EXTENSIONS.has(ext)) return;
+
+    // Read-only GET requests are public (analytics dashboard)
+    if (req.method === "GET") return;
 
     const header = req.headers.authorization;
     if (!header?.startsWith("Bearer ")) {
