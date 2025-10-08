@@ -61,13 +61,6 @@ serverFiles:
             annotations:
               summary: "API P95 latency above 2s"
 
-          - alert: PodRestartRate
-            expr: increase(kube_pod_container_status_restarts_total{namespace="token-analytics"}[1h]) > 3
-            labels:
-              severity: critical
-            annotations:
-              summary: "Pod restarting frequently"
-
           - alert: HealthCheckDown
             expr: up{job="token-analytics-api"} == 0
             for: 2m
@@ -77,19 +70,13 @@ serverFiles:
               summary: "API health check failing"
 
 # Disable components we don't need on free tier
+# Disable everything except Prometheus server — minimal footprint for t3.small
 alertmanager:
-  enabled: false  # alerts go to Prometheus UI for now
+  enabled: false
 pushgateway:
   enabled: false
 kube-state-metrics:
-  enabled: true
-  resources:
-    requests:
-      cpu: 10m
-      memory: 32Mi
-    limits:
-      cpu: 50m
-      memory: 64Mi
+  enabled: false
 configmapReload:
   prometheus:
     resources:
@@ -100,4 +87,4 @@ configmapReload:
         cpu: 25m
         memory: 32Mi
 nodeExporter:
-  enabled: false  # saves resources on free tier
+  enabled: false
