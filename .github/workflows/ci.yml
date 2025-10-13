@@ -136,6 +136,12 @@ jobs:
 
       - name: Deploy with Helm
         run: |
+          # Auto-cleanup stuck Helm releases (failed/pending from previous runs)
+          kubectl delete secrets -n token-analytics \
+            -l owner=helm,status=pending-upgrade 2>/dev/null || true
+          kubectl delete secrets -n token-analytics \
+            -l owner=helm,status=failed 2>/dev/null || true
+
           helm upgrade --install token-analytics helm/token-analytics \
             --namespace token-analytics --create-namespace \
             --set image.tag="${IMAGE_TAG}" \
