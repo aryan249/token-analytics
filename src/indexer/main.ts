@@ -12,8 +12,14 @@ async function main() {
   const pool = makePool(config.postgresUrl);
   await bootstrapSchema(pool);
 
-  const redis   = await makeRedisClient(config.redisUrl);
-  const scanner = new Scanner(pool, redis);
+  const primaryRedis = await makeRedisClient(config.redisUrl);
+  const replicaClients = await Promise.all(
+    config.redisReplicaUrls.map(url => makeRedisClient(url))
+  );
+  const allRedisClients = [primaryRedis, ...replicaClients];
+  logger.info({ regions: allRedisClients.length }, "Connected to Redis instances");
+
+  const scanner = new Scanner(pool, allRedisClients);
 
   let shuttingDown = false;
   async function shutdown(sig: string) {
@@ -21,7 +27,7 @@ async function main() {
     shuttingDown = true;
     logger.info({ sig }, "Shutting down");
     scanner.stop();
-    await redis.quit();
+    await Promise.all(allRedisClients.map(c => c.quit()));
     await pool.end();
     process.exit(0);
   }
