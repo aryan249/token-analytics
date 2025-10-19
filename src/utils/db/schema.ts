@@ -71,6 +71,8 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
         ON trades (token_address, block_timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_trades_block
         ON trades (block_number);
+      CREATE INDEX IF NOT EXISTS idx_trades_tx_hash
+        ON trades (tx_hash);
 
       -- ── OHLCV candles ───────────────────────────────────────────────────────
       CREATE TABLE IF NOT EXISTS candles (
@@ -118,6 +120,8 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
       );
       CREATE INDEX IF NOT EXISTS idx_fee_distributions_token
         ON fee_distributions (token_address, block_timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_fee_distributions_timestamp
+        ON fee_distributions (block_timestamp DESC);
 
       -- ── Fee escrow withdrawals ─────────────────────────────────────────────
       CREATE TABLE IF NOT EXISTS fee_escrow_withdrawals (
@@ -170,6 +174,31 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
       CREATE TABLE IF NOT EXISTS processed_transfer_events (
         event_id TEXT PRIMARY KEY
       );
+
+      -- ── Publish ledger (tracks what was sent to Redis for gap detection) ──
+      CREATE TABLE IF NOT EXISTS publish_ledger (
+        block_number  BIGINT   NOT NULL,
+        stream        TEXT     NOT NULL,
+        event_count   INTEGER  NOT NULL,
+        stream_ids    TEXT[]   NOT NULL DEFAULT '{}',
+        published_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (block_number, stream)
+      );
+      CREATE INDEX IF NOT EXISTS idx_publish_ledger_block
+        ON publish_ledger (block_number DESC);
+
+      -- ── Dead-letter queue (failed events persisted for replay) ────────────
+      CREATE TABLE IF NOT EXISTS dead_letter_queue (
+        id             SERIAL       PRIMARY KEY,
+        stream         TEXT         NOT NULL,
+        message_id     TEXT         NOT NULL,
+        data           JSONB        NOT NULL,
+        error          TEXT,
+        attempts       INTEGER      NOT NULL DEFAULT 0,
+        created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_dlq_stream
+        ON dead_letter_queue (stream, created_at DESC);
 
       -- ── Pool state ─────────────────────────────────────────────────────────
       CREATE TABLE IF NOT EXISTS pool_state (
