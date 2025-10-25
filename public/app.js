@@ -22,7 +22,7 @@ function apiFetch(url) {
 // ── Utilities ────────────────────────────────────────────────────────────────
 
 function formatUsd(v) {
-  if (v == null) return '$0';
+  if (v == null) return '-';
   const n = typeof v === 'string' ? parseFloat(v) : v;
   if (isNaN(n) || n === 0) return '$0';
   const abs = Math.abs(n);
@@ -31,23 +31,27 @@ function formatUsd(v) {
   if (abs >= 1e3) return '$' + (n / 1e3).toFixed(1) + 'K';
   if (abs >= 1) return '$' + n.toFixed(2);
   if (abs >= 0.01) return '$' + n.toFixed(4);
-  return '$' + n.toPrecision(3);
+  if (abs >= 0.0001) return '$' + n.toFixed(6);
+  // Very small: show full decimal (no scientific notation)
+  return '$' + n.toFixed(10).replace(/0+$/, '');
 }
 
 function formatUsdFull(v) {
-  if (v == null) return '$0';
+  if (v == null) return '-';
   const n = typeof v === 'string' ? parseFloat(v) : v;
   if (isNaN(n) || n === 0) return '$0';
   if (Math.abs(n) >= 1) return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return '$' + n.toPrecision(4);
+  if (Math.abs(n) >= 0.0001) return '$' + n.toFixed(6);
+  return '$' + n.toFixed(12).replace(/0+$/, '');
 }
 
 function formatEth(v) {
-  if (v == null) return '0';
+  if (v == null) return '-';
   const n = parseFloat(String(v));
-  if (isNaN(n) || n === 0) return '0';
+  if (isNaN(n) || n === 0) return '0 ETH';
   if (Math.abs(n) >= 1) return n.toFixed(4) + ' ETH';
-  return n.toPrecision(4) + ' ETH';
+  if (Math.abs(n) >= 0.001) return n.toFixed(6) + ' ETH';
+  return n.toFixed(10).replace(/0+$/, '') + ' ETH';
 }
 
 function formatEthShort(v) {
@@ -197,6 +201,8 @@ const ws = new WsManager();
 
 let tokenData = [];
 let currentSort = 'marketCap';
+let currentPage = 1;
+const PAGE_SIZE = 20;
 
 function getCreatorAddr(t) {
   if (t.royaltyMembers && t.royaltyMembers.length > 0) return t.royaltyMembers[0].address;
@@ -225,7 +231,6 @@ function renderTokenRow(t) {
     </div>
     <div class="vol-cell">
       <div class="vol-value">${formatUsd(t.twentyFourHourVolumeUSD)}</div>
-      <div class="vol-sub">${formatEthShort(t.twentyFourHourVolume)}</div>
     </div>
     <div class="holders-cell">
       <div class="holders-addr">${creator ? shortenAddr(creator) : '-'}</div>
@@ -233,10 +238,6 @@ function renderTokenRow(t) {
     </div>
     <div class="earned-cell">
       <div class="earned-value">${formatUsd(t.feesEarnedUSD)}</div>
-      <div class="earned-sub">${formatEthShort(t.feesEarned)}</div>
-    </div>
-    <div class="trade-cell">
-      <button class="trade-btn" onclick="event.stopPropagation(); location.href='/token.html?address=${t.tokenAddress}'">Trade</button>
     </div>
   </div>`;
 }
@@ -245,17 +246,57 @@ function renderTokenList(tokens) {
   const list = document.getElementById('token-list');
   if (!list) return;
   if (!tokens.length) { list.innerHTML = '<div class="loading-state">No tokens found</div>'; return; }
-  list.innerHTML = tokens.map(t => renderTokenRow(t)).join('');
 
-  // Draw sparklines after DOM is ready
+  const totalPages = Math.ceil(tokens.length / PAGE_SIZE);
+  if (currentPage > totalPages) currentPage = totalPages;
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const page = tokens.slice(start, start + PAGE_SIZE);
+
+  list.innerHTML = page.map(t => renderTokenRow(t)).join('');
+
   requestAnimationFrame(() => {
-    tokens.forEach(t => {
+    page.forEach(t => {
       const canvas = list.querySelector(`canvas[data-token="${t.tokenAddress}"]`);
       if (canvas && t.hourData && t.hourData.length) {
         drawSparkline(canvas, t.hourData, canvas.dataset.positive === 'true');
       }
     });
   });
+
+  renderPagination(tokens.length, totalPages);
+}
+
+function renderPagination(total, totalPages) {
+  const el = document.getElementById('pagination');
+  if (!el || totalPages <= 1) { if (el) el.innerHTML = ''; return; }
+
+  let html = '';
+  html += `<button class="page-btn" onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>&larr; Prev</button>`;
+
+  const range = [];
+  range.push(1);
+  for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) {
+    range.push(i);
+  }
+  if (totalPages > 1) range.push(totalPages);
+
+  let prev = 0;
+  for (const p of [...new Set(range)].sort((a, b) => a - b)) {
+    if (prev && p - prev > 1) html += '<span class="page-info">...</span>';
+    html += `<button class="page-btn ${p === currentPage ? 'active' : ''}" onclick="goToPage(${p})">${p}</button>`;
+    prev = p;
+  }
+
+  html += `<span class="page-info">${total} tokens</span>`;
+  html += `<button class="page-btn" onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next &rarr;</button>`;
+
+  el.innerHTML = html;
+}
+
+function goToPage(page) {
+  currentPage = page;
+  renderTokenList(sortTokens(tokenData, currentSort));
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function sortTokens(tokens, sort) {
@@ -312,6 +353,7 @@ function initHomePage() {
       document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       currentSort = btn.dataset.sort;
+      currentPage = 1;
       renderTokenList(sortTokens(tokenData, currentSort));
     });
   });
@@ -371,8 +413,7 @@ function renderTokenHeader(t) {
       <img class="th-img" src="${t.image}" alt="" onerror="this.style.display='none'">
       <div class="th-info">
         <h2>${t.name || '???'}<span>${t.symbol || ''}</span></h2>
-        <div class="th-price-big" id="live-price">${formatEth(t.priceETH)}</div>
-        <div class="th-price-usd" id="live-price-usd">${formatUsdFull(t.priceUSD)}</div>
+        <div class="th-price-big" id="live-price">${formatUsdFull(t.priceUSD)}</div>
         ${socialHtml}
       </div>
     </div>
@@ -381,7 +422,7 @@ function renderTokenHeader(t) {
       <div class="th-stat"><div class="th-stat-label">24h Change</div><div class="th-stat-value ${ch.cls}" id="live-change">${ch.text}</div></div>
       <div class="th-stat"><div class="th-stat-label">24h Volume</div><div class="th-stat-value">${formatUsd(t.twentyFourHourVolumeUSD)}</div></div>
       <div class="th-stat"><div class="th-stat-label">Holders</div><div class="th-stat-value">${formatNumber(t.holderCount)}</div></div>
-      <div class="th-stat"><div class="th-stat-label">Fees Earned</div><div class="th-stat-value">${formatEthShort(t.feesEarned)}</div></div>
+      <div class="th-stat"><div class="th-stat-label">Fees Earned</div><div class="th-stat-value">${formatUsd(t.feesEarnedUSD)}</div></div>
       ${t.fairLaunch ? '<div class="th-stat"><div class="th-stat-label">Fair Launch</div><div class="th-stat-value" style="color:#a78bfa">Active</div></div>' : ''}
     </div>
   `;
@@ -453,9 +494,8 @@ async function loadTrades(address, append) {
 
     const html = trades.map(t => `<tr>
       <td style="text-align:left"><span class="badge ${t.isBuy ? 'badge-buy' : 'badge-sell'}">${t.isBuy ? 'BUY' : 'SELL'}</span></td>
-      <td>${formatEth(t.amountETH)}</td>
       <td>${formatUsd(t.amountUSD)}</td>
-      <td>${formatEth(t.priceETH)}</td>
+      <td>${formatUsdFull(t.priceUSD)}</td>
       <td><a href="https://basescan.org/address/${t.trader || ''}" target="_blank">${shortenAddr(t.trader)}</a></td>
       <td>${timeAgo(t.blockTimestamp)}</td>
       <td><a href="https://basescan.org/tx/${t.txHash}" target="_blank">${shortenAddr(t.txHash)}</a></td>
@@ -551,10 +591,8 @@ async function initTokenPage() {
   ws.on('priceUpdate', (data) => {
     if (data.coinAddress !== detailAddress?.toLowerCase()) return;
     const priceEl = document.getElementById('live-price');
-    const usdEl = document.getElementById('live-price-usd');
     const mcapEl = document.getElementById('live-mcap');
-    if (priceEl && data.priceETH) priceEl.textContent = formatEth(data.priceETH);
-    if (usdEl && data.priceUSD) usdEl.textContent = formatUsdFull(data.priceUSD);
+    if (priceEl && data.priceUSD) priceEl.textContent = formatUsdFull(data.priceUSD);
     if (mcapEl && data.marketCapUSD) mcapEl.textContent = formatUsd(data.marketCapUSD);
   });
 
@@ -582,7 +620,7 @@ async function initTokenPage() {
     setTimeout(() => tr.style.background = '', 1000);
     tr.innerHTML = `
       <td style="text-align:left"><span class="badge ${data.type === 'buy' ? 'badge-buy' : 'badge-sell'}">${data.type === 'buy' ? 'BUY' : 'SELL'}</span></td>
-      <td>-</td><td>${formatUsd(data.amountUSD)}</td><td>-</td>
+      <td>${formatUsd(data.amountUSD)}</td>
       <td><a href="https://basescan.org/address/${data.maker || ''}" target="_blank">${shortenAddr(data.maker)}</a></td>
       <td>just now</td>
       <td><a href="https://basescan.org/tx/${data.txHash || ''}" target="_blank">${shortenAddr(data.txHash)}</a></td>

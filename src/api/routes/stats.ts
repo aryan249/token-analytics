@@ -26,7 +26,7 @@ export const statsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
 
   // GET /stats
   app.get("/", async (_req, reply) => {
-    const data = await withCache(redis, KEYS.apiStats(), 30, async () => {
+    const data = await withCache(redis, KEYS.apiStats(), 10, async () => {
       const [stats, topEarners, ethUsdRate] = await Promise.all([
         getPlatformStats(pool),
         getTopFeeEarners24h(pool),
@@ -61,7 +61,7 @@ export const statsRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     async (req, reply) => {
       const limit = Math.min(Number(req.query.limit ?? 10), 100);
 
-      const data = await withCache(redis, `${KEYS.apiStats()}:top-earners:${limit}`, 60, async () => {
+      const data = await withCache(redis, `${KEYS.apiStats()}:top-earners:${limit}`, 15, async () => {
         const [rows, ethUsdRate] = await Promise.all([
           pool.query<{ token_address: string; symbol: string | null; lifetime_fees_eth: string }>(
             `SELECT

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FLaunch Analytics</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="logo">FLaunch <span class="logo-sub">Analytics</span></h1>
+    </div>
+    <div class="topbar-stats" id="platform-stats"></div>
+    <div class="topbar-right">
+      <div class="live-indicator" id="ws-status">
+        <span class="live-dot"></span>
+        <span class="live-text">Offline</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Filter tabs -->
+    <div class="filter-bar">
+      <button class="filter-btn active" data-sort="marketCap">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        Trending
+      </button>
+      <button class="filter-btn" data-sort="newest">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        New
+      </button>
+      <button class="filter-btn" data-sort="trades">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+        Top
+      </button>
+      <button class="filter-btn" data-sort="volume">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        High vol
+      </button>
+    </div>
+
+    <!-- Token list header -->
+    <div class="list-header">
+      <div class="lh-coin">COIN</div>
+      <div class="lh-chart"></div>
+      <div class="lh-mcap">MCAP</div>
+      <div class="lh-vol">24H VOL.</div>
+      <div class="lh-holders">HOLDERS</div>
+      <div class="lh-earned">EARNED</div>
+    </div>
+
+    <!-- Token list -->
+    <div class="token-list" id="token-list">
+      <div class="loading-state">Loading tokens...</div>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pagination" id="pagination"></div>
+  </main>
+
+  <div class="activity-feed" id="activity-feed"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
