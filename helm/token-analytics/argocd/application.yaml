@@ -44,7 +44,7 @@ spec:
   project: token-analytics
   source:
     repoURL: https://github.com/aryan249/token-analytics.git
-    targetRevision: feat/argocd-gitops
+    targetRevision: main
     path: helm/token-analytics
     helm:
       valueFiles:
@@ -127,7 +127,7 @@ spec:
   project: token-analytics
   source:
     repoURL: https://github.com/aryan249/token-analytics.git
-    targetRevision: feat/argocd-gitops
+    targetRevision: main
     path: helm/observability
   destination:
     server: https://kubernetes.default.svc
