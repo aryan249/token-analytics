@@ -22,11 +22,19 @@ export async function getPlatformStats(pool: Pool): Promise<PlatformStats> {
     total_holders: string;
   }>(`
     SELECT
-      (SELECT COUNT(*)::text FROM token_registry)                                            AS total_tokens,
-      (SELECT COUNT(*)::text FROM trades)                                                    AS total_trades,
-      (SELECT COALESCE(SUM(ABS(amount0_eth)), 0)::text FROM trades)                          AS total_volume,
-      (SELECT COALESCE(SUM(creator_amount + protocol_amount), 0)::text FROM fee_distributions) AS total_fees,
-      (SELECT COUNT(DISTINCT wallet)::text FROM holder_balances WHERE balance > 0)           AS total_holders
+      (SELECT COUNT(*)::text FROM token_registry) AS total_tokens,
+      t.total_trades,
+      t.total_volume,
+      COALESCE(f.total_fees, '0')   AS total_fees,
+      COALESCE(h.total_holders, '0') AS total_holders
+    FROM
+      (SELECT COUNT(*)::text AS total_trades,
+              COALESCE(SUM(ABS(amount0_eth)), 0)::text AS total_volume
+       FROM trades) t,
+      (SELECT SUM(creator_amount + protocol_amount)::text AS total_fees
+       FROM fee_distributions) f,
+      (SELECT COUNT(DISTINCT wallet)::text AS total_holders
+       FROM holder_balances WHERE balance > 0) h
   `);
 
   const r = res.rows[0];

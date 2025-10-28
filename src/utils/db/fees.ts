@@ -129,18 +129,29 @@ export async function getWalletRoyalties(
     total_supply: string | null; last_price_eth: string | null;
     wallet_share: string | null; total_shares: string | null;
   }>(
-    `SELECT
+    `WITH
+     latest_price AS (
+       SELECT DISTINCT ON (token_address)
+         token_address, close_eth
+       FROM candles
+       WHERE resolution = '1m'
+       ORDER BY token_address, bucket_time DESC
+     ),
+     share_totals AS (
+       SELECT token_address, SUM(share)::text AS total_shares
+       FROM royalty_members
+       GROUP BY token_address
+     )
+     SELECT
        tr.token_address,
        tr.name,
        tr.symbol,
        COALESCE(d.earned_eth, '0')  AS earned_eth,
        COALESCE(c.claimed_eth, '0') AS claimed_eth,
        tr.total_supply::text,
-       (SELECT close_eth::text FROM candles
-        WHERE token_address = tr.token_address AND resolution = '1m'
-        ORDER BY bucket_time DESC LIMIT 1) AS last_price_eth,
+       lp.close_eth::text AS last_price_eth,
        rm_me.share::text AS wallet_share,
-       (SELECT SUM(share)::text FROM royalty_members WHERE token_address = tr.token_address) AS total_shares
+       st.total_shares
      FROM (
        SELECT DISTINCT token_address FROM token_registry WHERE creator = $1
        UNION
@@ -156,7 +167,9 @@ export async function getWalletRoyalties(
        FROM fee_escrow_withdrawals WHERE recipient = $1 GROUP BY token
      ) c ON c.token_address = tr.token_address
      LEFT JOIN royalty_members rm_me
-       ON rm_me.token_address = tr.token_address AND rm_me.recipient = $1`,
+       ON rm_me.token_address = tr.token_address AND rm_me.recipient = $1
+     LEFT JOIN latest_price lp ON lp.token_address = tr.token_address
+     LEFT JOIN share_totals st ON st.token_address = tr.token_address`,
     [wallet]
   );
 
