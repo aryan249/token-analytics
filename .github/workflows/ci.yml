@@ -2,7 +2,7 @@ name: CI/CD
 
 on:
   push:
-    branches: [main, staging, feat/*]
+    branches: [main, staging, feat/*, fix/*]
   pull_request:
     branches: [main, staging]
 
@@ -43,7 +43,7 @@ jobs:
 
   docker-build-push:
     needs: lint-build-test
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || startsWith(github.ref, 'refs/heads/feat/')
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || startsWith(github.ref, 'refs/heads/feat/') || startsWith(github.ref, 'refs/heads/fix/')
     runs-on: self-hosted
     permissions:
       contents: write
@@ -89,11 +89,55 @@ jobs:
           # Retry push with rebase to handle concurrent CI runs
           git push || (git pull --rebase && git push)
 
-  # ── No deploy job — Argo CD watches git and syncs automatically ────────────
-  #
-  # Promotion workflow:
-  #   Push to staging branch → Argo CD syncs to token-analytics-staging
-  #   Merge to main          → Argo CD syncs to token-analytics (production)
-  #
-  # Drift detection: selfHeal=true reverts manual kubectl changes within 3 min
-  # Rollback: argocd app rollback token-analytics-production <revision>
+  deploy:
+    needs: docker-build-push
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || startsWith(github.ref, 'refs/heads/feat/') || startsWith(github.ref, 'refs/heads/fix/')
+    runs-on: self-hosted
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4.1.7
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Pull latest (includes image tag update from previous job)
+        run: git pull --ff-only origin ${{ github.ref_name }} || true
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --name token-analytics --region $AWS_REGION
+
+      - name: Install External Secrets Operator (if not present)
+        run: |
+          helm repo add external-secrets https://charts.external-secrets.io || true
+          helm repo update
+          helm upgrade --install external-secrets external-secrets/external-secrets \
+            --namespace external-secrets --create-namespace \
+            --set installCRDs=true \
+            --wait --timeout 5m
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install token-analytics helm/token-analytics \
+            --namespace token-analytics --create-namespace \
+            --set image.tag="${IMAGE_TAG}" \
+            --wait --timeout 10m
+
+      - name: Verify deployment
+        run: |
+          echo "=== Pods ==="
+          kubectl get pods -n token-analytics
+          echo ""
+          echo "=== HPA ==="
+          kubectl get hpa -n token-analytics
+          echo ""
+          echo "=== PDBs ==="
+          kubectl get pdb -n token-analytics
+          echo ""
+          echo "=== Network Policies ==="
+          kubectl get networkpolicy -n token-analytics
+          echo ""
+          echo "=== Ingress ==="
+          kubectl get ingress -n token-analytics
+
+  # Note: When Argo CD is enabled, remove the deploy job above.
+  # Argo CD will watch git and sync automatically.
