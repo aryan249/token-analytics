@@ -1,0 +1,83 @@
+{{- range $name, $cfg := .Values.processors }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: processor-{{ $name }}
+  namespace: {{ $.Values.namespace }}
+  labels:
+    app: processor-{{ $name }}
+    {{- include "token-analytics.labels" $ | nindent 4 }}
+spec:
+  serviceName: processor-{{ $name }}
+  replicas: {{ $cfg.replicas }}
+  selector:
+    matchLabels:
+      app: processor-{{ $name }}
+  template:
+    metadata:
+      labels:
+        app: processor-{{ $name }}
+    spec:
+      securityContext:
+        {{- toYaml $.Values.podDefaults.securityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ $.Values.podDefaults.terminationGracePeriodSeconds }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: processor-{{ $name }}
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: processor-{{ $name }}
+          image: {{ include "token-analytics.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.podDefaults.containerSecurity | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: {{ $.Values.podDefaults.tmpMountPath }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ $.Values.podDefaults.preStopSleepSeconds }}"]
+          command: ["node", "dist/processors/{{ $name }}.js"]
+          envFrom:
+            - configMapRef:
+                name: {{ $.Chart.Name }}-config
+            - secretRef:
+                name: {{ $.Chart.Name }}-secrets
+          resources:
+            {{- toYaml $cfg.resources | nindent 12 }}
+          startupProbe:
+            exec:
+              command: ["node", "-e", "setTimeout(()=>process.exit(0),0)"]
+            {{- toYaml $.Values.probes.processors.startup | nindent 12 }}
+          readinessProbe:
+            exec:
+              command: ["node", "-e", "try{require('fs').accessSync('{{ $.Values.podDefaults.tmpMountPath }}/processor-ready');process.exit(0)}catch{process.exit(1)}"]
+            {{- toYaml $.Values.probes.processors.readiness | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["node", "-e", "try{const s=require('fs').statSync('{{ $.Values.podDefaults.tmpMountPath }}/processor-alive');process.exit(Date.now()-s.mtimeMs<{{ $.Values.probes.processors.stalenessMs }}?0:1)}catch{process.exit(1)}"]
+            {{- toYaml $.Values.probes.processors.liveness | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: processor-{{ $name }}
+  namespace: {{ $.Values.namespace }}
+  labels:
+    app: processor-{{ $name }}
+spec:
+  clusterIP: None
+  selector:
+    app: processor-{{ $name }}
+{{- end }}

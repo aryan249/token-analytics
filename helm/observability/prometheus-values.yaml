@@ -1,0 +1,90 @@
+# Standalone Prometheus — lightweight, no operator, no CRDs
+# Install: helm upgrade --install prometheus prometheus-community/prometheus \
+#            -n monitoring --create-namespace -f helm/observability/prometheus-values.yaml
+
+# Minimal resources for t3.small nodes
+server:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 250m
+      memory: 512Mi
+  retention: 3d
+  persistentVolume:
+    enabled: false  # emptyDir for free tier
+  global:
+    scrape_interval: 30s
+    evaluation_interval: 30s
+
+# Scrape our app
+extraScrapeConfigs: |
+  - job_name: token-analytics-api
+    kubernetes_sd_configs:
+      - role: endpoints
+        namespaces:
+          names: [token-analytics]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name]
+        regex: api
+        action: keep
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+# Alerting rules
+serverFiles:
+  alerting_rules.yml:
+    groups:
+      - name: token-analytics
+        rules:
+          - alert: HighErrorRate
+            expr: rate(errors_total[5m]) > 0.1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Error rate above 0.1/sec"
+
+          - alert: DeadLetterQueueGrowing
+            expr: increase(dead_letter_total[1h]) > 0
+            labels:
+              severity: critical
+            annotations:
+              summary: "Events sent to dead-letter queue"
+
+          - alert: HighAPILatency
+            expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "API P95 latency above 2s"
+
+          - alert: HealthCheckDown
+            expr: up{job="token-analytics-api"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "API health check failing"
+
+# Disable components we don't need on free tier
+# Disable everything except Prometheus server — minimal footprint for t3.small
+alertmanager:
+  enabled: false
+pushgateway:
+  enabled: false
+kube-state-metrics:
+  enabled: false
+configmapReload:
+  prometheus:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 25m
+        memory: 32Mi
+nodeExporter:
+  enabled: false

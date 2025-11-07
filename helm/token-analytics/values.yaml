@@ -1,0 +1,210 @@
+image:
+  repository: 692046684301.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
+  tag: "4e11cdb"
+  # Update this tag from CI output, then merge to main/staging to deploy.
+  pullPolicy: Always
+
+namespace: token-analytics
+
+# ── External Secrets (pulled from AWS Secrets Manager) ────────────────────────
+externalSecrets:
+  region: ap-south-1
+  roleArn: "arn:aws:iam::692046684301:role/token-analytics-external-secrets-role"
+  secretName: "token-analytics/app-secrets"
+  # All keys from this secret are auto-extracted — no need to list them here.
+  # Just add new keys to AWS Secrets Manager and pods will get them on next sync.
+
+# ── Shared Config (injected into ALL pods via ConfigMap) ─────────────────────
+# Add new env vars here — no template changes needed.
+config:
+  CHAIN_ID: "8453"
+  BATCH_SIZE: "100"
+  LOG_LEVEL: "info"
+  NODE_ENV: "production"
+  API_PORT: "3000"
+
+# ── Indexer (StatefulSet, single instance) ────────────────────────────────────
+indexer:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ── Processors (StatefulSets with consumer groups) ────────────────────────────
+processors:
+  trade:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+  token:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+  candle:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+  position:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+  fees:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+  price:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+# ── API (Deployment, horizontally scalable) ───────────────────────────────────
+api:
+  replicas: 2
+  port: 3000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCpuUtilization: 70
+    targetMemoryUtilization: 80
+    scaleUp:
+      stabilizationSeconds: 60
+      pods: 1
+      periodSeconds: 60
+    scaleDown:
+      stabilizationSeconds: 300
+      pods: 1
+      periodSeconds: 120
+
+# ── Service ───────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+# ── Ingress ───────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: alb
+  host: ""
+  # Set certificateArn to enable HTTPS (get free cert from ACM)
+  certificateArn: ""
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/stickiness-enabled: "true"
+    alb.ingress.kubernetes.io/stickiness-type: "app_cookie"
+
+# ── Pod Defaults (applied to all workloads) ─────────────────────────────────
+# Change here → all pods updated. No template edits needed.
+podDefaults:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurity:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - "ALL"
+  terminationGracePeriodSeconds: 60
+  preStopSleepSeconds: 15
+  healthPath: /health
+  tmpMountPath: /tmp
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
+# ── Probes ──────────────────────────────────────────────────────────────────
+probes:
+  api:
+    startup:
+      failureThreshold: 10
+      periodSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+    liveness:
+      initialDelaySeconds: 15
+      periodSeconds: 20
+      timeoutSeconds: 3
+      failureThreshold: 3
+  indexer:
+    startup:
+      failureThreshold: 12
+      periodSeconds: 10
+    readiness:
+      initialDelaySeconds: 20
+      periodSeconds: 15
+      timeoutSeconds: 3
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      failureThreshold: 3
+      timeoutSeconds: 5
+    stalenessMs: 120000
+  processors:
+    startup:
+      failureThreshold: 12
+      periodSeconds: 5
+    readiness:
+      initialDelaySeconds: 15
+      periodSeconds: 15
+      timeoutSeconds: 3
+    liveness:
+      initialDelaySeconds: 20
+      periodSeconds: 30
+      failureThreshold: 3
+      timeoutSeconds: 5
+    stalenessMs: 120000
+
+# ── Monitoring ──────────────────────────────────────────────────────────────
+monitoring:
+  enabled: true

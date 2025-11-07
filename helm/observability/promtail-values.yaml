@@ -1,0 +1,15 @@
+# Promtail — ships pod logs to Loki
+# Install: helm upgrade --install promtail grafana/promtail \
+#            -n monitoring --create-namespace -f helm/observability/promtail-values.yaml
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+config:
+  clients:
+    - url: http://loki.monitoring:3100/loki/api/v1/push
