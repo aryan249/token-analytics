@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Install dependencies (libicu needed by .NET runtime in GitHub runner)
-dnf install -y docker git libicu openssl-libs krb5-libs zlib
+dnf install -y docker git libicu openssl-libs krb5-libs zlib unzip tar gzip
 
 systemctl enable docker
 systemctl start docker
