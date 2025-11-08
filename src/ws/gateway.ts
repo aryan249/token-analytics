@@ -56,7 +56,6 @@ function broadcast(msg: object): void {
   }
 }
 
-
 // ── Token metadata cache ──────────────────────────────────────────────────────
 
 interface TokenMeta {

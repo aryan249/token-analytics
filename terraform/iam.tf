@@ -132,6 +132,11 @@ resource "aws_iam_role_policy_attachment" "runner_ecr" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
 }
 
+resource "aws_iam_role_policy_attachment" "runner_ssm" {
+  role       = aws_iam_role.runner.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_iam_instance_profile" "runner" {
   name = "${var.project}-runner-profile"
   role = aws_iam_role.runner.name
