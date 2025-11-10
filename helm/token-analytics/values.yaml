@@ -1,8 +1,7 @@
 image:
   repository: 207270671706.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
-  tag: latest
-  # Tag is overridden by Argo CD Image Updater — do not set a specific SHA here.
-  # Image Updater detects new ECR pushes and sets the tag automatically.
+  tag: "d571f0ad677ec2a29cf66f4c5f76f949e7447cf9"
+  # Update this tag from CI output, then merge to main/staging to deploy.
   pullPolicy: Always
 
 namespace: token-analytics
