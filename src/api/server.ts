@@ -13,6 +13,7 @@ import { makePool }          from "../clients/postgres";
 import { makeRedisClient, getEthUsdRate, setEthUsdRate, type RedisClient } from "../clients/redis";
 import { bootstrapSchema }   from "../utils/db/schema";
 import { logger }            from "../utils/logger";
+import { registry, httpRequestDuration, httpRequestsTotal } from "../utils/metrics";
 import { tokenRoutes }       from "./routes/tokens";
 import { userRoutes }        from "./routes/users";
 import { statsRoutes }       from "./routes/stats";
@@ -67,13 +68,24 @@ async function main(): Promise<void> {
     return reply.status(err.statusCode ?? 500).send({ error: err.message ?? "Internal server error" });
   });
 
-  // Request ID + logging
+  // Request ID + metrics timing
   app.addHook("onRequest", async (req) => {
     (req as any).requestId = req.id ?? crypto.randomUUID();
+    (req as any).startTime = process.hrtime.bigint();
+  });
+  app.addHook("onResponse", async (req, reply) => {
+    const start = (req as any).startTime as bigint | undefined;
+    if (start) {
+      const durationSec = Number(process.hrtime.bigint() - start) / 1e9;
+      const route = req.routeOptions?.url ?? req.url.split("?")[0];
+      httpRequestDuration.observe({ method: req.method, route, status_code: reply.statusCode }, durationSec);
+      httpRequestsTotal.inc({ method: req.method, route, status_code: reply.statusCode });
+    }
   });
 
   const rateLimitRedis = new Redis(redisUrl);
-  await app.register(cors, { origin: true });
+  const corsOrigin = process.env.CORS_ORIGIN ?? true;
+  await app.register(cors, { origin: corsOrigin });
   await app.register(rateLimit, {
     max: 1000,
     timeWindow: "1 minute",
@@ -89,12 +101,49 @@ async function main(): Promise<void> {
     logger.info("JWT authentication enabled");
   }
 
-  // Health
-  app.get("/health", async () => ({
-    status:    "ok",
-    timestamp: new Date().toISOString(),
-    wsClients: 0,
-  }));
+  // Health — verify Redis + Postgres connectivity
+  app.get("/health", async (_req, reply) => {
+    const checks: Record<string, string> = {};
+    let healthy = true;
+
+    try {
+      await redis.ping();
+      checks.redis = "ok";
+    } catch {
+      checks.redis = "fail";
+      healthy = false;
+    }
+
+    try {
+      await readPool.query("SELECT 1");
+      checks.postgres = "ok";
+    } catch {
+      checks.postgres = "fail";
+      healthy = false;
+    }
+
+    const body = {
+      status:    healthy ? "ok" : "degraded",
+      timestamp: new Date().toISOString(),
+      checks,
+    };
+    return reply.status(healthy ? 200 : 503).send(body);
+  });
+
+  // Prometheus metrics endpoint (internal — not exposed via ALB)
+  app.get("/metrics", async (_req, reply) => {
+    reply.header("content-type", registry.contentType);
+    return reply.send(await registry.metrics());
+  });
+
+  // CSP + security headers on all responses
+  app.addHook("onSend", async (_req, reply) => {
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("X-Frame-Options", "DENY");
+    reply.header("X-XSS-Protection", "1; mode=block");
+    reply.header("Content-Security-Policy",
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https://i.flaunch.gg data:; connect-src 'self' wss: ws:; font-src 'self';");
+  });
 
   // Auth routes (public)
   if (jwtSecret) {
