@@ -50,8 +50,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4.1.7
 
-      - name: Login to ECR
-        run: aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin 207270671706.dkr.ecr.$AWS_REGION.amazonaws.com
+      - name: Login to ECR (with retry)
+        run: |
+          for i in 1 2 3; do
+            aws ecr get-login-password --region $AWS_REGION | \
+              docker login --username AWS --password-stdin 207270671706.dkr.ecr.$AWS_REGION.amazonaws.com && break
+            echo "ECR login attempt $i failed, retrying in 15s..."
+            sleep 15
+          done
 
       - name: Build Docker image
         run: |
