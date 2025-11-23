@@ -15,7 +15,7 @@ resource "aws_security_group" "runner" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.runner_ssh_cidr]
     description = "SSH"
   }
 
@@ -111,8 +111,8 @@ resource "aws_cloudwatch_metric_alarm" "runner_disk" {
   namespace           = "CWAgent"
   period              = 300
   statistic           = "Average"
-  threshold           = 85
-  alarm_description   = "Runner disk usage above 85%"
+  threshold           = var.runner_disk_alert_threshold
+  alarm_description   = "Runner disk usage above ${var.runner_disk_alert_threshold}%"
   dimensions = {
     InstanceId = aws_instance.runner.id
     path       = "/"

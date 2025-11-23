@@ -149,3 +149,61 @@ variable "rds_max_storage" {
   type    = number
   default = 50
 }
+
+variable "rds_multi_az" {
+  type    = bool
+  default = false
+}
+
+variable "rds_backup_window" {
+  type    = string
+  default = "03:00-04:00"
+}
+
+variable "rds_maintenance_window" {
+  type    = string
+  default = "sun:04:00-sun:05:00"
+}
+
+# ── ElastiCache Extra ────────────────────────────────────────────────────────
+
+variable "redis_engine_version" {
+  type    = string
+  default = "7.1"
+}
+
+variable "redis_snapshot_window" {
+  type    = string
+  default = "04:00-05:00"
+}
+
+variable "redis_maintenance_window" {
+  type    = string
+  default = "sun:05:00-sun:06:00"
+}
+
+# ── EKS Extra ────────────────────────────────────────────────────────────────
+
+variable "eks_public_access" {
+  description = "Enable public API endpoint (set false for private-only clusters)"
+  type        = bool
+  default     = true
+}
+
+variable "eks_private_access" {
+  type    = bool
+  default = true
+}
+
+# ── Runner Extra ─────────────────────────────────────────────────────────────
+
+variable "runner_ssh_cidr" {
+  description = "CIDR for SSH access to runner (default: open — restrict to your IP)"
+  type        = string
+  default     = "0.0.0.0/0"
+}
+
+variable "runner_disk_alert_threshold" {
+  type    = number
+  default = 85
+}
