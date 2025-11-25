@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   const rateLimitRedis = new Redis(redisUrl);
   await app.register(cors, { origin: true });
   await app.register(rateLimit, {
-    max: 1000,
+    max: 100,
     timeWindow: "1 minute",
     allowList: ["127.0.0.1"],
     keyGenerator: (req) => req.ip,
