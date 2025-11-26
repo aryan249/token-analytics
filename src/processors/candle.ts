@@ -2,11 +2,12 @@
 
 import "dotenv/config";
 import { upsertCandle } from "../utils/db/candles";
-import { EVENT_CHANNELS } from "../clients/redis";
+import { EVENT_CHANNELS, publishCandleUpdate, setCandleTip, KEYS } from "../clients/redis";
+import { invalidate } from "../api/cache";
 import { BaseProcessor } from "./base-processor";
-import { sqrtPriceX96ToEthPrice, getBucketTime, ALL_RESOLUTIONS } from "../utils/math";
+import { getBucketTime, ALL_RESOLUTIONS } from "../utils/math";
 import { logger } from "../utils/logger";
-import type { DecodedEvent, PoolSwapEvent } from "../types/events";
+import type { CandleResolution, DecodedEvent, PoolSwapEvent } from "../types/events";
 
 class CandleProcessor extends BaseProcessor {
   get channel() { return EVENT_CHANNELS.swap; }
@@ -15,19 +16,38 @@ class CandleProcessor extends BaseProcessor {
     if (event.eventType !== "PoolSwap") return;
     const e = event as PoolSwapEvent;
 
-    const priceEth  = sqrtPriceX96ToEthPrice(e.sqrtPriceX96);
-    const volumeEth = e.amount0 < 0n ? -e.amount0 : e.amount0;
+    // Skip swaps where we couldn't resolve the token address or price is zero
+    if (!e.tokenAddress || e.priceEth === 0n) return;
 
     for (const resolution of ALL_RESOLUTIONS) {
       const bucketTime = getBucketTime(e.blockTimestamp, resolution);
-      await upsertCandle(this.pool, {
-        tokenAddress: e.tokenAddress, resolution, bucketTime,
-        openEth: priceEth, highEth: priceEth, lowEth: priceEth, closeEth: priceEth,
-        volumeEth, tradeCount: 1,
-      });
+      const candle = {
+        tokenAddress: e.tokenAddress,
+        resolution:   resolution as CandleResolution,
+        bucketTime,
+        openEth:  e.priceEth,
+        highEth:  e.priceEth,
+        lowEth:   e.priceEth,
+        closeEth: e.priceEth,
+        volumeEth: e.volumeEth,
+        tradeCount: 1,
+      };
+      await upsertCandle(this.pool, candle);
+
+      const tip = {
+        type:         "candle",
+        tokenAddress: e.tokenAddress,
+        resolution,
+        bucketTime:   bucketTime.toString(),
+        closeEth:     e.priceEth.toString(),
+        volumeEth:    e.volumeEth.toString(),
+      };
+      await invalidate(this.publisher, KEYS.apiCandles(e.tokenAddress, resolution));
+      await setCandleTip(this.publisher, e.tokenAddress, resolution, tip);
+      await publishCandleUpdate(this.publisher, e.tokenAddress, resolution, tip);
     }
 
-    logger.debug({ token: e.tokenAddress, price: priceEth.toString() }, "Candles updated");
+    logger.debug({ token: e.tokenAddress, price: e.priceEth.toString() }, "Candles updated");
   }
 }
 

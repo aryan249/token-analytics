@@ -2,9 +2,10 @@
 
 import "dotenv/config";
 import { insertTrade }               from "../utils/db/trades";
-import { EVENT_CHANNELS }            from "../clients/redis";
+import { EVENT_CHANNELS, publishTokenUpdate, getEthUsdRate, KEYS } from "../clients/redis";
+import { invalidate }                from "../api/cache";
 import { BaseProcessor }             from "./base-processor";
-import { sqrtPriceX96ToEthPrice }    from "../utils/math";
+import { ethPriceToUsd }             from "../utils/math";
 import { logger }                    from "../utils/logger";
 import type { DecodedEvent, PoolSwapEvent } from "../types/events";
 
@@ -14,16 +15,38 @@ class TradeProcessor extends BaseProcessor {
   async handle(event: DecodedEvent): Promise<void> {
     if (event.eventType !== "PoolSwap") return;
     const e = event as PoolSwapEvent;
-    const priceEth = sqrtPriceX96ToEthPrice(e.sqrtPriceX96);
+
+    // Skip swaps where we couldn't resolve the token address
+    if (!e.tokenAddress) return;
+
+    const ethUsdRate = await getEthUsdRate(this.publisher);
+    const priceUsd   = ethUsdRate ? ethPriceToUsd(e.priceEth, ethUsdRate) : null;
 
     await insertTrade(this.pool, {
-      id: e.id, blockNumber: e.blockNumber, blockHash: e.blockHash,
-      blockTimestamp: e.blockTimestamp, txHash: e.transactionHash,
-      tokenAddress: e.tokenAddress, poolId: e.poolId,
-      sender: e.sender, recipient: e.recipient,
-      amount0Eth: e.amount0, amount1Tokens: e.amount1,
-      priceEth, priceUsd: null,
-      feeEth: e.fee, isBuy: e.isBuy, phase: e.phase, chainId: e.chainId,
+      id:             e.id,
+      blockNumber:    e.blockNumber,
+      blockHash:      e.blockHash,
+      blockTimestamp: e.blockTimestamp,
+      txHash:         e.transactionHash,
+      tokenAddress:   e.tokenAddress,
+      poolId:         e.poolId,
+      amount0Eth:     e.totalAmount0,
+      amount1Tokens:  e.totalAmount1,
+      priceEth:       e.priceEth,
+      priceUsd,
+      isBuy:          e.isBuy,
+      chainId:        e.chainId,
+    });
+
+    await invalidate(this.publisher, KEYS.apiTokenList());
+    await publishTokenUpdate(this.publisher, e.tokenAddress, {
+      type:           "trade",
+      tokenAddress:   e.tokenAddress,
+      priceEth:       e.priceEth.toString(),
+      isBuy:          e.isBuy,
+      volumeEth:      e.volumeEth.toString(),
+      txHash:         e.transactionHash,
+      blockTimestamp: e.blockTimestamp.toString(),
     });
 
     logger.debug({ id: e.id, token: e.tokenAddress }, "Trade written");

@@ -1,6 +1,7 @@
 import { createClient, type RedisClientType } from "redis";
 import type { Pool } from "pg";
 import { makePool } from "../clients/postgres";
+import { makeRedisClient, type RedisClient } from "../clients/redis";
 import { bootstrapSchema } from "../utils/db/schema";
 import { logger } from "../utils/logger";
 import type { DecodedEvent } from "../types/events";
@@ -15,6 +16,8 @@ export abstract class BaseProcessor {
 
   // Pool is created once and shared across all handle() calls
   protected readonly pool: Pool;
+  // Publisher for sending updates to the WebSocket gateway via Redis pub/sub
+  protected publisher!: RedisClient;
 
   constructor(redisUrl: string, postgresUrl: string) {
     this.redisUrl    = redisUrl;
@@ -29,6 +32,9 @@ export abstract class BaseProcessor {
     // Ensure all tables exist before subscribing — processor is self-sufficient
     await bootstrapSchema(this.pool);
     logger.info({ channel: this.channel }, "Schema ready");
+
+    // Publisher for outbound updates to the WS gateway
+    this.publisher = await makeRedisClient(this.redisUrl);
 
     // Subscriber needs its own dedicated connection — subscribe mode is exclusive
     const sub = createClient({ url: this.redisUrl }) as RedisClientType;
