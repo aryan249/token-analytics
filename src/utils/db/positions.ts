@@ -46,11 +46,74 @@ export async function getPosition(
 export async function deletePositionsAboveBlock(
   pool: Pool, blockNumber: bigint
 ): Promise<void> {
+  // Delete only the wallet-token positions whose state was changed by reorg'd
+  // trades. The indexer replay will reconstruct them from the canonical chain.
   await pool.query(
-    `UPDATE positions SET balance = 0, cost_basis_eth = 0, realized_pnl_eth = 0
-     WHERE token_address IN (
-       SELECT DISTINCT token_address FROM trades WHERE block_number > $1
+    `DELETE FROM positions
+     WHERE (wallet_address, token_address) IN (
+       SELECT DISTINCT
+         CASE WHEN is_buy THEN recipient ELSE sender END,
+         token_address
+       FROM trades
+       WHERE block_number > $1
      )`,
     [blockNumber.toString()]
   );
+}
+
+// ── API read queries ──────────────────────────────────────────────────────────
+
+export interface WalletPositionRow {
+  tokenAddress:     string;
+  balance:          string;
+  costBasisEth:     string;
+  realizedPnlEth:   string;
+  wacEth:           string;
+  currentPriceEth:  string | null;
+  unrealizedPnlEth: string;
+  updatedAt:        string;
+}
+
+export async function getWalletPositions(
+  pool: Pool, walletAddress: string
+): Promise<WalletPositionRow[]> {
+  const res = await pool.query<{
+    token_address: string; balance: string; cost_basis_eth: string;
+    realized_pnl_eth: string; wac_eth: string;
+    current_price_eth: string | null; unrealized_pnl_eth: string;
+    updated_at: string;
+  }>(
+    `SELECT
+       p.token_address,
+       p.balance::text,
+       p.cost_basis_eth::text,
+       p.realized_pnl_eth::text,
+       CASE WHEN p.balance > 0
+         THEN (p.cost_basis_eth * 1000000000000000000 / p.balance)::text
+         ELSE '0' END AS wac_eth,
+       c.close_eth::text AS current_price_eth,
+       CASE WHEN p.balance > 0 AND c.close_eth IS NOT NULL
+         THEN (c.close_eth * p.balance / 1000000000000000000 - p.cost_basis_eth)::text
+         ELSE '0' END AS unrealized_pnl_eth,
+       p.updated_at::text
+     FROM positions p
+     LEFT JOIN LATERAL (
+       SELECT close_eth FROM candles
+       WHERE token_address = p.token_address AND resolution = '1m'
+       ORDER BY bucket_time DESC LIMIT 1
+     ) c ON true
+     WHERE p.wallet_address = $1 AND p.balance > 0
+     ORDER BY p.updated_at DESC`,
+    [walletAddress.toLowerCase()]
+  );
+  return res.rows.map((r) => ({
+    tokenAddress:     r.token_address,
+    balance:          r.balance,
+    costBasisEth:     r.cost_basis_eth,
+    realizedPnlEth:   r.realized_pnl_eth,
+    wacEth:           r.wac_eth,
+    currentPriceEth:  r.current_price_eth,
+    unrealizedPnlEth: r.unrealized_pnl_eth,
+    updatedAt:        r.updated_at,
+  }));
 }

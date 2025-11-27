@@ -1,8 +1,7 @@
 import type { CandleResolution, Position } from "../types/events";
-import { CANDLE_SECONDS } from "../types/events";
+import { Q96, WAD, CANDLE_SECONDS, ALL_RESOLUTIONS } from "./constants";
 
-const Q96 = 2n ** 96n;
-const WAD  = 10n ** 18n;
+export { ALL_RESOLUTIONS };
 
 export function sqrtPriceX96ToEthPrice(sqrtPriceX96: bigint): bigint {
   if (sqrtPriceX96 === 0n) return 0n;
@@ -17,8 +16,6 @@ export function getBucketTime(blockTimestamp: bigint, resolution: CandleResoluti
   const seconds = BigInt(CANDLE_SECONDS[resolution]);
   return (blockTimestamp / seconds) * seconds;
 }
-
-export const ALL_RESOLUTIONS: CandleResolution[] = ["1m", "15m", "1h", "4h", "1d"];
 
 export function applyTradeToPosition(
   existing:      Position | null,
