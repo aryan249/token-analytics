@@ -105,10 +105,15 @@ export interface WalletRoyaltySummary {
   totalClaimedEth: string;
   claimableEth:    string;
   byToken: Array<{
-    tokenAddress: string;
-    earnedEth:    string;
-    claimedEth:   string;
-    claimableEth: string;
+    tokenAddress:  string;
+    name:          string | null;
+    symbol:        string | null;
+    image:         string;
+    earnedEth:     string;
+    claimedEth:    string;
+    claimableEth:  string;
+    feeSharePct:   string;
+    marketCapETH:  string | null;
   }>;
 }
 
@@ -117,48 +122,78 @@ export async function getWalletRoyalties(
 ): Promise<WalletRoyaltySummary> {
   const wallet = walletAddress.toLowerCase();
 
-  // Per-token breakdown: earned from fee_distributions (creator_amount), claimed from fee_escrow_withdrawals
+  // Only tokens where this wallet is creator OR royalty_members recipient
   const res = await pool.query<{
-    token_address: string; earned_eth: string; claimed_eth: string;
+    token_address: string; name: string | null; symbol: string | null;
+    earned_eth: string; claimed_eth: string;
+    total_supply: string | null; last_price_eth: string | null;
+    wallet_share: string | null; total_shares: string | null;
   }>(
     `SELECT
-       t.token_address,
-       COALESCE(d.earned_eth, '0') AS earned_eth,
-       COALESCE(c.claimed_eth, '0') AS claimed_eth
+       tr.token_address,
+       tr.name,
+       tr.symbol,
+       COALESCE(d.earned_eth, '0')  AS earned_eth,
+       COALESCE(c.claimed_eth, '0') AS claimed_eth,
+       tr.total_supply::text,
+       (SELECT close_eth::text FROM candles
+        WHERE token_address = tr.token_address AND resolution = '1m'
+        ORDER BY bucket_time DESC LIMIT 1) AS last_price_eth,
+       rm_me.share::text AS wallet_share,
+       (SELECT SUM(share)::text FROM royalty_members WHERE token_address = tr.token_address) AS total_shares
      FROM (
-       SELECT DISTINCT tr.token_address
-       FROM fee_distributions fd
-       JOIN token_registry tr ON tr.pool_id = fd.pool_id
-       WHERE fd.creator_amount > 0
+       SELECT DISTINCT token_address FROM token_registry WHERE creator = $1
        UNION
-       SELECT DISTINCT tr2.token_address
-       FROM fee_escrow_withdrawals fw
-       JOIN token_registry tr2 ON tr2.token_address = fw.token
-       WHERE fw.recipient = $1
-     ) t
+       SELECT DISTINCT token_address FROM royalty_members WHERE recipient = $1
+     ) owned
+     JOIN token_registry tr ON tr.token_address = owned.token_address
      LEFT JOIN (
-       SELECT tr.token_address, SUM(fd.creator_amount)::text AS earned_eth
-       FROM fee_distributions fd
-       JOIN token_registry tr ON tr.pool_id = fd.pool_id
-       GROUP BY tr.token_address
-     ) d ON d.token_address = t.token_address
+       SELECT token_address, SUM(creator_amount)::text AS earned_eth
+       FROM fee_distributions GROUP BY token_address
+     ) d ON d.token_address = tr.token_address
      LEFT JOIN (
-       SELECT fw.token AS token_address, SUM(fw.amount)::text AS claimed_eth
-       FROM fee_escrow_withdrawals fw
-       WHERE fw.recipient = $1 GROUP BY fw.token
-     ) c ON c.token_address = t.token_address`,
+       SELECT token AS token_address, SUM(amount)::text AS claimed_eth
+       FROM fee_escrow_withdrawals WHERE recipient = $1 GROUP BY token
+     ) c ON c.token_address = tr.token_address
+     LEFT JOIN royalty_members rm_me
+       ON rm_me.token_address = tr.token_address AND rm_me.recipient = $1`,
     [wallet]
   );
 
   const byToken = res.rows.map((r) => {
-    const earned    = BigInt(r.earned_eth);
+    // For royalty members, scale earned by their share fraction.
+    // For creators (no royalty_members row), they receive 100% of creator_amount.
+    let earned = BigInt(r.earned_eth);
+    if (r.wallet_share && r.total_shares) {
+      const ws = BigInt(r.wallet_share);
+      const ts = BigInt(r.total_shares);
+      if (ts > 0n) earned = earned * ws / ts;
+    }
+
     const claimed   = BigInt(r.claimed_eth);
     const claimable = earned > claimed ? earned - claimed : 0n;
+
+    const mcapEth = r.last_price_eth && r.total_supply
+      ? (BigInt(r.last_price_eth) * BigInt(r.total_supply) / (10n ** 18n)).toString()
+      : null;
+
+    let feeSharePct = "100.00"; // creator owns 100% by default
+    if (r.wallet_share && r.total_shares) {
+      const ws = BigInt(r.wallet_share);
+      const ts = BigInt(r.total_shares);
+      feeSharePct = ts > 0n ? (Number(ws * 10000n / ts) / 100).toFixed(2) : "0.00";
+    }
+
     return {
-      tokenAddress: r.token_address,
-      earnedEth:    r.earned_eth,
-      claimedEth:   r.claimed_eth,
-      claimableEth: claimable.toString(),
+      tokenAddress:  r.token_address,
+      name:          r.name,
+      symbol:        r.symbol,
+      image:         `https://i.flaunch.gg/token/${r.token_address}`,
+      earnedEth:     earned.toString(),
+      claimedEth:    r.claimed_eth,
+      claimableEth:  claimable.toString(),
+      feeSharePct,
+      marketCapETH:  mcapEth,
     };
   });
 
