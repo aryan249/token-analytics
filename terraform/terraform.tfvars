@@ -43,7 +43,7 @@ redis_snapshot_window    = "22:30-23:30"
 redis_maintenance_window = "wed:04:00-wed:05:00"
 
 # ECR
-ecr_tag_mutability = "IMMUTABLE"
+ecr_tag_mutability = "MUTABLE"
 ecr_keep_images    = 10
 
 # Runner
