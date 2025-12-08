@@ -45,11 +45,36 @@ export const CONTRACTS: ContractEntry[] = [
 
 export const STATIC_CONTRACT_SET = new Set(CONTRACTS.map((c) => c.address.toLowerCase()));
 export const ADDRESS_TO_ROLE     = new Map<string, ContractRole>(CONTRACTS.map((c) => [c.address.toLowerCase(), c.role]));
+
 export const FLAUNCH_NFT_SET     = new Set(CONTRACTS.filter((c) => c.role === "FlaunchNFT").map((c) => c.address.toLowerCase()));
 export const FEE_ESCROW_SET      = new Set(CONTRACTS.filter((c) => c.role === "FeeEscrow").map((c) => c.address.toLowerCase()));
 export const FAIR_LAUNCH_SET     = new Set(CONTRACTS.filter((c) => c.role === "FairLaunch").map((c) => c.address.toLowerCase()));
 export const BID_WALL_SET        = new Set(CONTRACTS.filter((c) => c.role === "BidWall" || c.role === "AnyBidWall").map((c) => c.address.toLowerCase()));
 export const CHAINLINK_ADDRESS   = CONTRACTS.find((c) => c.role === "ChainlinkAggregator")!.address.toLowerCase();
+export const TREASURY_FACTORY_SET = new Set(CONTRACTS.filter((c) => c.role === "TreasuryManagerFactory").map((c) => c.address.toLowerCase()));
 
-// ⚠️  Set to the block number of PositionManager v1 deployment on Base
-export const EARLIEST_DEPLOY_BLOCK = 0n;
+// ── PositionManager version sets ──────────────────────────────────────────────
+
+/** PM v1 only — uses 10-field params tuple */
+export const PM_V1_SET = new Set(
+  CONTRACTS.filter((c) => c.role === "PositionManager" && c.version === "v1")
+           .map((c) => c.address.toLowerCase())
+);
+
+/** PM v1.1 / v1.1.1 / v1.1.4 — uses 11-field params tuple (adds fairLaunchDuration) */
+export const PM_V11_SET = new Set(
+  CONTRACTS.filter((c) => c.role === "PositionManager" && c.version !== "v1")
+           .map((c) => c.address.toLowerCase())
+);
+
+/** AnyPositionManager v1 and v2 — uses 5-field params tuple */
+export const ANY_PM_SET = new Set(
+  CONTRACTS.filter((c) => c.role === "AnyPositionManager")
+           .map((c) => c.address.toLowerCase())
+);
+
+/** All PositionManager addresses (any version) */
+export const PM_ALL_SET = new Set([...PM_V1_SET, ...PM_V11_SET, ...ANY_PM_SET]);
+
+// ── PositionManager v1 deployment block on Base mainnet ───────────────────────
+export const EARLIEST_DEPLOY_BLOCK = 25689000n;
