@@ -55,7 +55,7 @@ services:
 
   indexer:
     <<: *common
-    command: ["npx", "ts-node", "--transpile-only", "src/indexer/main.ts"]
+    command: ["npx", "node", "dist/indexer/main.js"]
     logging:
       driver: json-file
       options:
@@ -66,33 +66,33 @@ services:
 
   processor-trade:
     <<: *common
-    command: ["npx", "ts-node", "--transpile-only", "src/processors/trade.ts"]
+    command: ["npx", "node", "dist/processors/trade.js"]
 
   processor-token:
     <<: *common
-    command: ["npx", "ts-node", "--transpile-only", "src/processors/token.ts"]
+    command: ["npx", "node", "dist/processors/token.js"]
 
   processor-candle:
     <<: *common
-    command: ["npx", "ts-node", "--transpile-only", "src/processors/candle.ts"]
+    command: ["npx", "node", "dist/processors/candle.js"]
 
   processor-position:
     <<: *common
-    command: ["npx", "ts-node", "--transpile-only", "src/processors/position.ts"]
+    command: ["npx", "node", "dist/processors/position.js"]
 
   processor-fees:
     <<: *common
-    command: ["npx", "ts-node", "--transpile-only", "src/processors/fees.ts"]
+    command: ["npx", "node", "dist/processors/fees.js"]
 
   processor-price:
     <<: *common
-    command: ["npx", "ts-node", "--transpile-only", "src/processors/price.ts"]
+    command: ["npx", "node", "dist/processors/price.js"]
 
   # ── API + WebSocket ─────────────────────────────────────────────────────────
 
   api:
     <<: *common
-    command: ["npx", "ts-node", "--transpile-only", "src/api/server.ts"]
+    command: ["npx", "node", "dist/api/server.js"]
     environment:
       POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
       REDIS_URL:    redis://redis:6379

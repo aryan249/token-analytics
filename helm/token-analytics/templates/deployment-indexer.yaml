@@ -23,7 +23,7 @@ spec:
           image: {{ include "token-analytics.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- include "token-analytics.containerSecurity" . | nindent 10 }}
-          command: ["npx", "ts-node", "--transpile-only", "src/indexer/main.ts"]
+          command: ["node", "dist/indexer/main.js"]
           envFrom:
             {{- include "token-analytics.envFrom" . | nindent 12 }}
           resources:
