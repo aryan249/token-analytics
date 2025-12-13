@@ -16,8 +16,8 @@ resource "aws_security_group" "rds" {
     from_port       = var.postgres_port
     to_port         = var.postgres_port
     protocol        = "tcp"
-    security_groups = [aws_security_group.eks_cluster.id]
-    description     = "PostgreSQL from EKS"
+    security_groups = [aws_security_group.eks_cluster.id, aws_eks_cluster.main.vpc_config[0].cluster_security_group_id]
+    description     = "PostgreSQL from EKS (custom + managed node SG)"
   }
 
   egress {
