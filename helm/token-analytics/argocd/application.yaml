@@ -78,7 +78,7 @@ spec:
   project: token-analytics
   source:
     repoURL: https://github.com/aryan249/token-analytics.git
-    targetRevision: fix/review-fixes
+    targetRevision: feat/indexer-pipeline
     path: helm/token-analytics
     helm:
       valueFiles:
