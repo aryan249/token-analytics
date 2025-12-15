@@ -19,9 +19,9 @@ availability_zones = ["ap-south-1a", "ap-south-1b"]
 # EKS
 eks_cluster_version    = "1.29"
 eks_node_instance_type = "t3.small"
-eks_node_desired       = 3
-eks_node_min           = 1
-eks_node_max           = 4
+eks_node_desired       = 4
+eks_node_min           = 2
+eks_node_max           = 5
 eks_public_access      = true
 eks_private_access     = true
 
