@@ -31,7 +31,7 @@ usermod -aG docker runner
 
 # Install GitHub Actions runner
 cd /home/runner
-RUNNER_VERSION="2.321.0"
+RUNNER_VERSION="2.325.0"
 curl -o actions-runner.tar.gz -L "https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/actions-runner-linux-x64-$RUNNER_VERSION.tar.gz"
 tar xzf actions-runner.tar.gz
 rm actions-runner.tar.gz
