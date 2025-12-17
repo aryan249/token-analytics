@@ -21,16 +21,38 @@ spec:
       labels:
         app: api
     spec:
-      {{- include "token-analytics.securityContext" . | nindent 6 }}
-      {{- include "token-analytics.antiAffinity" (dict "app" "api") | nindent 6 }}
-      {{- include "token-analytics.topologySpread" (dict "app" "api") | nindent 6 }}
-      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- toYaml .Values.podDefaults.securityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.podDefaults.terminationGracePeriodSeconds }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: api
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: api
       containers:
         - name: api
           image: {{ include "token-analytics.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- include "token-analytics.containerSecurity" . | nindent 10 }}
-          {{- include "token-analytics.lifecycle" . | nindent 10 }}
+          securityContext:
+            {{- toYaml .Values.podDefaults.containerSecurity | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ .Values.podDefaults.preStopSleepSeconds }}"]
           command: ["node", "dist/api/server.js"]
           ports:
             - containerPort: {{ .Values.api.port }}
@@ -60,5 +82,7 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 3
             failureThreshold: 3
-      {{- include "token-analytics.tmpVolume" . | nindent 6 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
       restartPolicy: Always

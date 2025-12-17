@@ -19,15 +19,31 @@ spec:
       labels:
         app: processor-{{ $name }}
     spec:
-      {{- include "token-analytics.securityContext" $ | nindent 6 }}
-      {{- include "token-analytics.antiAffinity" (dict "app" (printf "processor-%s" $name)) | nindent 6 }}
-      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- toYaml $.Values.podDefaults.securityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ $.Values.podDefaults.terminationGracePeriodSeconds }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: processor-{{ $name }}
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: processor-{{ $name }}
           image: {{ include "token-analytics.image" $ }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
-          {{- include "token-analytics.containerSecurity" $ | nindent 10 }}
-          {{- include "token-analytics.lifecycle" $ | nindent 10 }}
+          securityContext:
+            {{- toYaml $.Values.podDefaults.containerSecurity | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ $.Values.podDefaults.preStopSleepSeconds }}"]
           command: ["node", "dist/processors/{{ $name }}.js"]
           envFrom:
             {{- include "token-analytics.envFrom" $ | nindent 12 }}
@@ -51,7 +67,9 @@ spec:
             periodSeconds: 30
             failureThreshold: 3
             timeoutSeconds: 5
-      {{- include "token-analytics.tmpVolume" $ | nindent 6 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
       restartPolicy: Always
 ---
 apiVersion: v1
