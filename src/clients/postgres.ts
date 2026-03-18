@@ -1,5 +1,3 @@
-// src/clients/postgres.ts
-
 import { Pool } from "pg";
 
 export function makePool(connectionString: string, min = 2, max = 10): Pool {
