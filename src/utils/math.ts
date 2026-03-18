@@ -1,5 +1,3 @@
-// src/shared/math.ts
-
 import type { CandleResolution, Position } from "../types/events";
 import { CANDLE_SECONDS } from "../types/events";
 
