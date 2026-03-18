@@ -1,0 +1,84 @@
+import { createClient, type RedisClientType } from "redis";
+import { logger } from "../utils/logger";
+
+export type RedisClient = RedisClientType;
+
+export async function makeRedisClient(url: string): Promise<RedisClient> {
+  const client = createClient({ url }) as RedisClient;
+  client.on("error",        (err) => logger.error({ err }, "Redis client error"));
+  client.on("reconnecting", ()    => logger.warn("Redis reconnecting"));
+  client.on("ready",        ()    => logger.info("Redis ready"));
+  await client.connect();
+  return client;
+}
+
+export const KEYS = {
+  tokenState:  (tokenAddress: string)                     => `token:${tokenAddress.toLowerCase()}`,
+  ethUsdRate:  ()                                         => "chainlink:eth_usd",
+  candleTip:   (tokenAddress: string, resolution: string) => `candle:${tokenAddress.toLowerCase()}:${resolution}`,
+  walletState: (walletAddress: string)                    => `wallet:${walletAddress.toLowerCase()}`,
+} as const;
+
+export const TTL = {
+  tokenState:  60,
+  ethUsdRate:  300,
+  candleTip:   60,
+  walletState: 120,
+} as const;
+
+// ── Event channels (indexer → processors) ────────────────────────────────────
+
+export const EVENT_CHANNELS = {
+  swap: "events:swap",   // PoolSwap            → trade + position + candle
+  fees: "events:fees",   // PoolFeesDistributed → fee processor
+  meta: "events:meta",   // PoolCreated         → token processor
+  price: "events:price",  // ChainlinkAnswerUpdated → price processor
+} as const;
+
+export type EventChannel = (typeof EVENT_CHANNELS)[keyof typeof EVENT_CHANNELS];
+
+// ── UI push channels (processors → WebSocket gateway) ────────────────────────
+
+export const CHANNELS = {
+  tokenUpdate:  (tokenAddress: string)                    => `updates:${tokenAddress.toLowerCase()}`,
+  candleUpdate: (tokenAddress: string, resolution: string) => `candles:${resolution}:${tokenAddress.toLowerCase()}`,
+  walletUpdate: (walletAddress: string)                   => `wallet:${walletAddress.toLowerCase()}`,
+} as const;
+
+export async function setTokenState(client: RedisClient, tokenAddress: string, state: object): Promise<void> {
+  await client.setEx(KEYS.tokenState(tokenAddress), TTL.tokenState, JSON.stringify(state));
+}
+
+export async function setEthUsdRate(client: RedisClient, rate: bigint): Promise<void> {
+  await client.setEx(KEYS.ethUsdRate(), TTL.ethUsdRate, rate.toString());
+}
+
+export async function getEthUsdRate(client: RedisClient): Promise<bigint | null> {
+  const raw = await client.get(KEYS.ethUsdRate());
+  return raw ? BigInt(raw) : null;
+}
+
+export async function setCandleTip(client: RedisClient, tokenAddress: string, resolution: string, candle: object): Promise<void> {
+  await client.setEx(KEYS.candleTip(tokenAddress, resolution), TTL.candleTip, JSON.stringify(candle));
+}
+
+export async function setWalletState(client: RedisClient, walletAddress: string, state: object): Promise<void> {
+  await client.setEx(KEYS.walletState(walletAddress), TTL.walletState, JSON.stringify(state));
+}
+
+export async function flushTokenCache(client: RedisClient, tokenAddress: string): Promise<void> {
+  const keys = [KEYS.tokenState(tokenAddress), ...["1m","15m","1h","4h","1d"].map((r) => KEYS.candleTip(tokenAddress, r))];
+  if (keys.length > 0) await client.del(keys);
+}
+
+export async function publishTokenUpdate(client: RedisClient, tokenAddress: string, payload: object): Promise<void> {
+  await client.publish(CHANNELS.tokenUpdate(tokenAddress), JSON.stringify(payload));
+}
+
+export async function publishCandleUpdate(client: RedisClient, tokenAddress: string, resolution: string, payload: object): Promise<void> {
+  await client.publish(CHANNELS.candleUpdate(tokenAddress, resolution), JSON.stringify(payload));
+}
+
+export async function publishWalletUpdate(client: RedisClient, walletAddress: string, payload: object): Promise<void> {
+  await client.publish(CHANNELS.walletUpdate(walletAddress), JSON.stringify(payload));
+}
