@@ -1,12 +1,14 @@
 // src/processors/position.ts
 
 import "dotenv/config";
-import { getPosition, upsertPosition }   from "../utils/db/positions";
-import { EVENT_CHANNELS }                from "../clients/redis";
-import { BaseProcessor }                 from "./base-processor";
-import { applyTradeToPosition }          from "../utils/math";
-import { logger }                        from "../utils/logger";
+import { EVENT_CHANNELS } from "../clients/redis";
+import { BaseProcessor }  from "./base-processor";
+import { logger }         from "../utils/logger";
 import type { DecodedEvent, PoolSwapEvent } from "../types/events";
+
+// NOTE: PoolSwap no longer carries sender/recipient — wallet position tracking
+// must be driven by ERC-20 Transfer events instead. This processor is a placeholder
+// until ERC-20-based position tracking is implemented.
 
 class PositionProcessor extends BaseProcessor {
   get channel() { return EVENT_CHANNELS.swap; }
@@ -14,16 +16,10 @@ class PositionProcessor extends BaseProcessor {
   async handle(event: DecodedEvent): Promise<void> {
     if (event.eventType !== "PoolSwap") return;
     const e = event as PoolSwapEvent;
+    if (!e.tokenAddress) return;
 
-    const walletAddress = e.isBuy ? e.recipient : e.sender;
-    const tokenAmount   = e.amount1 < 0n ? -e.amount1 : e.amount1;
-    const ethAmount     = e.amount0 < 0n ? -e.amount0 : e.amount0;
-
-    const existing = await getPosition(this.pool, walletAddress, e.tokenAddress);
-    const updated  = applyTradeToPosition(existing, walletAddress, e.tokenAddress, e.isBuy, tokenAmount, ethAmount);
-    await upsertPosition(this.pool, updated);
-
-    logger.debug({ wallet: walletAddress, token: e.tokenAddress }, "Position updated");
+    // TODO: replace with ERC-20 Transfer based position tracking
+    logger.debug({ token: e.tokenAddress, poolId: e.poolId }, "PoolSwap observed (position tracking pending ERC-20 Transfer impl)");
   }
 }
 
