@@ -14,7 +14,6 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
       );
 
       -- ── Block headers ───────────────────────────────────────────────────────
-      -- Every confirmed block stored for reorg parent-hash comparison.
       CREATE TABLE IF NOT EXISTS block_headers (
         block_number     BIGINT       PRIMARY KEY,
         block_hash       TEXT         NOT NULL UNIQUE,
@@ -33,9 +32,14 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
         creator          TEXT         NOT NULL,
         nft_id           BIGINT       NOT NULL,
         pm_address       TEXT         NOT NULL,
+        total_supply     NUMERIC,
+        name             TEXT,
+        symbol           TEXT,
         discovered_block BIGINT       NOT NULL,
         discovered_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE token_registry ADD COLUMN IF NOT EXISTS name   TEXT;
+      ALTER TABLE token_registry ADD COLUMN IF NOT EXISTS symbol TEXT;
       CREATE INDEX IF NOT EXISTS idx_token_registry_pool
         ON token_registry (pool_id);
 
@@ -48,24 +52,27 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
         tx_hash          TEXT         NOT NULL,
         token_address    TEXT         NOT NULL,
         pool_id          TEXT         NOT NULL,
-        sender           TEXT         NOT NULL,
-        recipient        TEXT         NOT NULL,
         amount0_eth      NUMERIC      NOT NULL,
         amount1_tokens   NUMERIC      NOT NULL,
         price_eth        NUMERIC      NOT NULL,
         price_usd        NUMERIC,
-        fee_eth          NUMERIC      NOT NULL,
         is_buy           BOOLEAN      NOT NULL,
-        phase            TEXT         NOT NULL,
         chain_id         INTEGER      NOT NULL,
         indexed_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
       );
+      -- Make previously NOT NULL columns optional (safe to run repeatedly)
+      ALTER TABLE trades ALTER COLUMN sender      DROP NOT NULL;
+      ALTER TABLE trades ALTER COLUMN recipient   DROP NOT NULL;
+      ALTER TABLE trades ALTER COLUMN fee_eth     DROP NOT NULL;
+      ALTER TABLE trades ALTER COLUMN phase       DROP NOT NULL;
+      ALTER TABLE trades ADD COLUMN IF NOT EXISTS sender      TEXT;
+      ALTER TABLE trades ADD COLUMN IF NOT EXISTS recipient   TEXT;
+      ALTER TABLE trades ADD COLUMN IF NOT EXISTS fee_eth     NUMERIC;
+      ALTER TABLE trades ADD COLUMN IF NOT EXISTS phase       TEXT;
       CREATE INDEX IF NOT EXISTS idx_trades_token
         ON trades (token_address, block_timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_trades_block
         ON trades (block_number);
-      CREATE INDEX IF NOT EXISTS idx_trades_recipient
-        ON trades (recipient);
 
       -- ── OHLCV candles ───────────────────────────────────────────────────────
       CREATE TABLE IF NOT EXISTS candles (
@@ -98,38 +105,65 @@ export async function bootstrapSchema(pool: Pool): Promise<void> {
 
       -- ── Fee distributions ───────────────────────────────────────────────────
       CREATE TABLE IF NOT EXISTS fee_distributions (
-        id               TEXT         PRIMARY KEY,
-        block_number     BIGINT       NOT NULL,
-        block_timestamp  BIGINT       NOT NULL,
-        tx_hash          TEXT         NOT NULL,
-        token_address    TEXT         NOT NULL,
-        pool_id          TEXT         NOT NULL,
-        total_fee_eth    NUMERIC      NOT NULL,
-        creator_fee_eth  NUMERIC      NOT NULL,
-        protocol_fee_eth NUMERIC      NOT NULL,
-        fee_receiver     TEXT         NOT NULL,
-        chain_id         INTEGER      NOT NULL
+        id                TEXT         PRIMARY KEY,
+        block_number      BIGINT       NOT NULL,
+        block_timestamp   BIGINT       NOT NULL,
+        tx_hash           TEXT         NOT NULL,
+        token_address     TEXT         NOT NULL,
+        pool_id           TEXT         NOT NULL,
+        donate_amount     NUMERIC      NOT NULL DEFAULT 0,
+        creator_amount    NUMERIC      NOT NULL DEFAULT 0,
+        bid_wall_amount   NUMERIC      NOT NULL DEFAULT 0,
+        governance_amount NUMERIC      NOT NULL DEFAULT 0,
+        protocol_amount   NUMERIC      NOT NULL DEFAULT 0,
+        chain_id          INTEGER      NOT NULL
       );
+      -- Drop old NOT NULL constraint on fee_receiver if it exists
+      ALTER TABLE fee_distributions ALTER COLUMN fee_receiver DROP NOT NULL;
+      -- Add new columns
+      ALTER TABLE fee_distributions ADD COLUMN IF NOT EXISTS donate_amount     NUMERIC NOT NULL DEFAULT 0;
+      ALTER TABLE fee_distributions ADD COLUMN IF NOT EXISTS creator_amount    NUMERIC NOT NULL DEFAULT 0;
+      ALTER TABLE fee_distributions ADD COLUMN IF NOT EXISTS bid_wall_amount   NUMERIC NOT NULL DEFAULT 0;
+      ALTER TABLE fee_distributions ADD COLUMN IF NOT EXISTS governance_amount NUMERIC NOT NULL DEFAULT 0;
+      ALTER TABLE fee_distributions ADD COLUMN IF NOT EXISTS protocol_amount   NUMERIC NOT NULL DEFAULT 0;
       CREATE INDEX IF NOT EXISTS idx_fee_distributions_token
         ON fee_distributions (token_address, block_timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_fee_distributions_receiver
-        ON fee_distributions (fee_receiver);
 
-      -- ── Fees claimed ────────────────────────────────────────────────────────
-      CREATE TABLE IF NOT EXISTS fees_claimed (
-        id               TEXT         PRIMARY KEY,
-        block_number     BIGINT       NOT NULL,
-        block_timestamp  BIGINT       NOT NULL,
-        tx_hash          TEXT         NOT NULL,
-        token_address    TEXT         NOT NULL,
-        claimant         TEXT         NOT NULL,
-        amount_eth       NUMERIC      NOT NULL,
-        chain_id         INTEGER      NOT NULL
+      -- ── Fee escrow withdrawals ───────────────────────────────────────────────
+      CREATE TABLE IF NOT EXISTS fee_escrow_withdrawals (
+        id              TEXT         PRIMARY KEY,
+        block_number    BIGINT       NOT NULL,
+        block_timestamp BIGINT       NOT NULL,
+        tx_hash         TEXT         NOT NULL,
+        sender          TEXT         NOT NULL,
+        recipient       TEXT         NOT NULL,
+        token           TEXT         NOT NULL,
+        amount          NUMERIC      NOT NULL,
+        chain_id        INTEGER      NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS idx_fees_claimed_claimant
-        ON fees_claimed (claimant, block_timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_fees_claimed_token
-        ON fees_claimed (token_address, block_timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_fee_escrow_withdrawals_recipient
+        ON fee_escrow_withdrawals (recipient, block_timestamp DESC);
+
+      -- ── Dynamic manager registry ─────────────────────────────────────────────
+      CREATE TABLE IF NOT EXISTS dynamic_managers (
+        manager_address  TEXT         PRIMARY KEY,
+        implementation   TEXT         NOT NULL,
+        manager_type     TEXT,
+        discovered_block BIGINT       NOT NULL,
+        discovered_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+      );
+
+      -- ── Fair launch info ─────────────────────────────────────────────────────
+      CREATE TABLE IF NOT EXISTS fair_launch_info (
+        pool_id        TEXT         PRIMARY KEY,
+        tokens         NUMERIC      NOT NULL,
+        starts_at      BIGINT       NOT NULL,
+        ends_at        BIGINT       NOT NULL,
+        ended_at       BIGINT,
+        revenue        NUMERIC,
+        supply         NUMERIC,
+        chain_id       INTEGER      NOT NULL
+      );
 
     `);
   } finally {

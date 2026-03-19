@@ -8,11 +8,11 @@ export async function upsertCandle(pool: Pool, candle: Candle): Promise<void> {
        open_eth, high_eth, low_eth, close_eth, volume_eth, trade_count
      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      ON CONFLICT (token_address, resolution, bucket_time) DO UPDATE SET
-       high_eth    = GREATEST(candles.high_eth, $5),
-       low_eth     = LEAST(candles.low_eth, $6),
-       close_eth   = $7,
-       volume_eth  = candles.volume_eth + $8,
-       trade_count = candles.trade_count + $9`,
+       high_eth    = GREATEST(candles.high_eth, EXCLUDED.high_eth),
+       low_eth     = LEAST(candles.low_eth, EXCLUDED.low_eth),
+       close_eth   = EXCLUDED.close_eth,
+       volume_eth  = candles.volume_eth + EXCLUDED.volume_eth,
+       trade_count = candles.trade_count + EXCLUDED.trade_count`,
     [
       candle.tokenAddress.toLowerCase(),
       candle.resolution,
@@ -30,13 +30,17 @@ export async function upsertCandle(pool: Pool, candle: Candle): Promise<void> {
 export async function deleteCandlesAboveBlock(
   pool: Pool, blockNumber: bigint
 ): Promise<void> {
+  // Find the floor of the earliest affected trade's timestamp at 1m resolution
+  // (the smallest bucket size), then delete all candle buckets that start at or
+  // after that boundary for any token touched by the reorg'd trades.
   await pool.query(
     `DELETE FROM candles
-     WHERE (token_address, resolution, bucket_time) IN (
-       SELECT DISTINCT t.token_address, c.resolution, c.bucket_time
-       FROM trades t
-       JOIN candles c ON c.token_address = t.token_address
-       WHERE t.block_number > $1
+     WHERE token_address IN (
+       SELECT DISTINCT token_address FROM trades WHERE block_number > $1
+     )
+     AND bucket_time >= (
+       SELECT (MIN(block_timestamp) / 60) * 60
+       FROM trades WHERE block_number > $1
      )`,
     [blockNumber.toString()]
   );
