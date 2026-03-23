@@ -2,6 +2,7 @@ import {
     createPublicClient,
     webSocket,
     http,
+    parseAbiItem,
     type Log,
     type Hash,
   } from "viem";
@@ -16,9 +17,14 @@ import {
   import { EVENT_CHANNELS }   from "../clients/redis";
   import { detectAndRecover } from "./reorg";
   import { decodeLog }        from "../utils/decoder";
-  import type { RawLog, BlockHeader, DecodedEvent, ManagerDeployedEvent } from "../types/events";
+  import type { RawLog, BlockHeader, DecodedEvent, ManagerDeployedEvent, PoolCreatedEvent } from "../types/events";
   import { config }           from "../config/config";
   import { logger }           from "../utils/logger";
+
+  // Parsed ABI event used for topic-only getLogs (no address filter)
+  const MANAGER_INITIALIZED_FEE_SPLIT_EVENT = parseAbiItem(
+    "event ManagerInitialized(address _owner, (uint256 creatorShare, uint256 ownerShare, (address recipient, uint256 share)[] recipientShares) _params)"
+  );
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -156,9 +162,11 @@ import {
 
       if (reorg.detected) return;
 
-      const logs    = await this.fetchLogsForBlock(block.number, block.timestamp);
-      const decoded = this.decodeLogs(logs);
-      this.updateDynamicManagers(decoded);
+      const logs      = await this.fetchLogsForBlock(block.number, block.timestamp);
+      const firstPass = this.decodeLogs(logs);
+      this.updateDynamicManagers(firstPass);
+      this.updatePoolMappings(firstPass);
+      const decoded   = this.decodeLogs(logs);
       await this.publishToChannels(decoded);
 
       await insertBlockHeader(this.pool, header, config.chainId);
@@ -194,6 +202,23 @@ import {
       }
     }
 
+    /** When PoolCreated is decoded, immediately update poolIdToToken so subsequent
+     *  swaps in the same or next batch resolve the token address correctly. */
+    private updatePoolMappings(events: DecodedEvent[]): void {
+      for (const e of events) {
+        if (e.eventType === "PoolCreated") {
+          const ev = e as PoolCreatedEvent;
+          const poolId = ev.poolId.toLowerCase();
+          const token  = ev.tokenAddress.toLowerCase();
+          if (!this.poolIdToToken.has(poolId)) {
+            this.poolIdToToken.set(poolId, token);
+            this.knownTokens.add(token);
+            logger.info({ poolId, token }, "Pool mapping discovered inline");
+          }
+        }
+      }
+    }
+
     private async publishToChannels(events: DecodedEvent[]): Promise<void> {
       for (const event of events) {
         const channel = this.routeToChannel(event);
@@ -205,6 +230,7 @@ import {
     private routeToChannel(event: DecodedEvent): string | null {
       switch (event.eventType) {
         case "PoolSwap":
+        case "PoolStateUpdated":
           return EVENT_CHANNELS.swap;
         case "PoolFeesDistributed":
         case "FeeEscrowDeposit":
@@ -214,9 +240,12 @@ import {
         case "FairLaunchCreated":
         case "FairLaunchEnded":
         case "ManagerDeployed":
+        case "ManagerInitializedFeeSplit":
           return EVENT_CHANNELS.meta;
         case "ChainlinkAnswerUpdated":
           return EVENT_CHANNELS.price;
+        case "ERC20Transfer":
+          return EVENT_CHANNELS.transfer;
         default:
           return null;
       }
@@ -231,14 +260,21 @@ import {
       for (let start = fromBlock; start <= toBlock; start += BATCH) {
         const end = start + BATCH - 1n < toBlock ? start + BATCH - 1n : toBlock;
 
+        // Fetch block headers and build a block→timestamp map for accurate candle buckets
+        const timestampMap = new Map<bigint, bigint>();
         for (let n = start; n <= end; n++) {
           const h = await this.fetchBlockHeader(n);
           await insertBlockHeader(this.pool, h, config.chainId);
+          timestampMap.set(h.blockNumber, h.blockTimestamp);
         }
 
-        const logs    = await this.fetchLogs(start, end, 0n);
+        const logs = await this.fetchLogsWithTimestamps(start, end, timestampMap);
+        // First pass: extract pool/manager mappings so swaps in the same batch resolve correctly
+        const firstPass = this.decodeLogs(logs);
+        this.updateDynamicManagers(firstPass);
+        this.updatePoolMappings(firstPass);
+        // Second pass: re-decode with updated mappings (fixes null tokenAddress on same-batch swaps)
         const decoded = this.decodeLogs(logs);
-        this.updateDynamicManagers(decoded);
         await this.publishToChannels(decoded);
         await writeCheckpoint(this.pool, config.chainId, end, "0x" as Hash);
 
@@ -249,20 +285,59 @@ import {
     // ── Log fetching ──────────────────────────────────────────────────────────
 
     private async fetchLogsForBlock(blockNumber: bigint, timestamp: bigint): Promise<RawLog[]> {
-      return this.fetchLogs(blockNumber, blockNumber, timestamp);
+      return this.fetchLogsWithTimestamps(blockNumber, blockNumber, new Map([[blockNumber, timestamp]]));
     }
 
-    private async fetchLogs(fromBlock: bigint, toBlock: bigint, timestamp: bigint): Promise<RawLog[]> {
-      // Combine static contract set with any dynamically discovered managers
-      const addresses = [...STATIC_CONTRACT_SET, ...this.dynamicManagers] as `0x${string}`[];
+    private async fetchLogsWithTimestamps(
+      fromBlock:    bigint,
+      toBlock:      bigint,
+      timestampMap: Map<bigint, bigint>,
+    ): Promise<RawLog[]> {
+      const addresses = [
+        ...STATIC_CONTRACT_SET,
+        ...this.dynamicManagers,
+        ...this.knownTokens,   // ERC-20 token contracts for Transfer event tracking
+      ] as `0x${string}`[];
 
-      const rawLogs = await withRetry(
-        () => this.httpClient.getLogs({ fromBlock, toBlock, address: addresses }),
-        "getLogs"
-      );
+      // Alchemy Free tier: max 10 blocks per eth_getLogs request.
+      const LOGS_CHUNK = 10n;
+      const allKnownLogs:      Awaited<ReturnType<typeof this.httpClient.getLogs>> = [];
+      const allManagerInitLogs: Awaited<ReturnType<typeof this.httpClient.getLogs>> = [];
 
-      return rawLogs
-        .map((l) => toRawLog(l, timestamp))
+      for (let chunkStart = fromBlock; chunkStart <= toBlock; chunkStart += LOGS_CHUNK) {
+        const chunkEnd = chunkStart + LOGS_CHUNK - 1n < toBlock ? chunkStart + LOGS_CHUNK - 1n : toBlock;
+
+        const [knownChunk, managerInitChunk] = await Promise.all([
+          withRetry(
+            () => this.httpClient.getLogs({ fromBlock: chunkStart, toBlock: chunkEnd, address: addresses }),
+            `getLogs-known-${chunkStart}`
+          ),
+          // Secondary fetch: ManagerInitializedFeeSplit by topic only (no address filter).
+          // Required because the manager contract is deployed + initialized in the SAME tx
+          // as ManagerDeployed, so its address isn't in dynamicManagers yet when we fetch.
+          withRetry(
+            () => this.httpClient.getLogs({
+              fromBlock: chunkStart, toBlock: chunkEnd,
+              event: MANAGER_INITIALIZED_FEE_SPLIT_EVENT,
+            }),
+            `getLogs-manager-init-${chunkStart}`
+          ),
+        ]);
+
+        allKnownLogs.push(...knownChunk);
+        allManagerInitLogs.push(...managerInitChunk);
+      }
+
+      // Merge, dedup by blockNumber+logIndex (manager init logs may overlap with known logs)
+      const seen = new Set(allKnownLogs.map((l) => `${l.blockNumber}:${l.logIndex}`));
+      const merged = [...allKnownLogs];
+      for (const l of allManagerInitLogs) {
+        const key = `${l.blockNumber}:${l.logIndex}`;
+        if (!seen.has(key)) { seen.add(key); merged.push(l); }
+      }
+
+      return merged
+        .map((l) => toRawLog(l, timestampMap.get(l.blockNumber!) ?? 0n))
         .filter((l) => l.topics.length > 0 && WATCHED_TOPICS.has(l.topics[0] as `0x${string}`));
     }
 
