@@ -1,9 +1,11 @@
-// src/processors/fees.ts
-
 import "dotenv/config";
 import { insertFeeDistribution, insertFeeEscrowWithdrawal } from "../utils/db/fees";
-import { EVENT_CHANNELS, publishWalletUpdate, KEYS }        from "../clients/redis";
+import {
+  EVENT_CHANNELS, publishWalletUpdate, publishCoinFeeUpdate, publishProtocolFeeUpdate,
+  getEthUsdRate, KEYS,
+}                                                            from "../clients/redis";
 import { invalidate }                                        from "../api/cache";
+import { ethPriceToUsd }                                     from "../utils/math";
 import { BaseProcessor }                                    from "./base-processor";
 import { logger }                                           from "../utils/logger";
 import type {
@@ -20,7 +22,11 @@ class FeeProcessor extends BaseProcessor {
       const e = event as PoolFeesDistributedEvent;
 
       // Skip if token address couldn't be resolved from pool id
-      const tokenAddress = e.tokenAddress ?? e.poolId;
+      if (!e.tokenAddress) {
+        logger.debug({ poolId: e.poolId }, "PoolFeesDistributed: unknown pool, skipping");
+        return;
+      }
+      const tokenAddress = e.tokenAddress;
 
       await insertFeeDistribution(this.pool, {
         id:               e.id,
@@ -36,6 +42,23 @@ class FeeProcessor extends BaseProcessor {
         protocolAmount:   e.protocolAmount,
         chainId:          e.chainId,
       });
+
+      // Publish to WebSocket gateway
+      const ethUsdRate   = await getEthUsdRate(this.publisher);
+      const totalFeesEth = e.creatorAmount + e.protocolAmount;
+      const feesUSD      = ethUsdRate ? ethPriceToUsd(totalFeesEth, ethUsdRate).toFixed(18) : "0";
+      const deltaUSD     = ethUsdRate ? ethPriceToUsd(e.protocolAmount, ethUsdRate).toFixed(18) : "0";
+
+      await publishCoinFeeUpdate(this.publisher, tokenAddress, {
+        coinAddress:    tokenAddress,
+        creatorFeesETH: e.creatorAmount.toString(),
+        feesUSD,
+        timestamp:      Number(e.blockTimestamp),
+      });
+
+      if (e.protocolAmount > 0n) {
+        await publishProtocolFeeUpdate(this.publisher, { deltaUSD });
+      }
 
       logger.debug({ id: e.id, poolId: e.poolId, token: e.tokenAddress }, "Fee distribution written");
 
