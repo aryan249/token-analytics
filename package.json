@@ -6,15 +6,29 @@
   "scripts": {
     "indexer": "ts-node --transpile-only src/indexer/main.ts",
     "processor:trade": "ts-node --transpile-only src/processors/trade.ts",
+    "processor:candle": "ts-node --transpile-only src/processors/candle.ts",
+    "processor:position": "ts-node --transpile-only src/processors/position.ts",
+    "processor:fees": "ts-node --transpile-only src/processors/fees.ts",
     "processor:token": "ts-node --transpile-only src/processors/token.ts",
+    "processor:price": "ts-node --transpile-only src/processors/price.ts",
+    "api": "ts-node --transpile-only src/api/server.ts",
+    "ws": "ts-node --transpile-only src/ws/gateway.ts",
+    "test:integration": "ts-node --transpile-only src/test/integration.ts",
+    "backfill:supply": "ts-node --transpile-only src/scripts/backfill-supply.ts",
+    "backfill:royalties": "ts-node --transpile-only src/scripts/backfill-royalties.ts",
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/static": "^9.0.0",
+    "@fastify/websocket": "^11.2.0",
     "dotenv": "^17.3.1",
+    "fastify": "^5.8.2",
     "kafkajs": "^2.2.4",
     "pg": "^8.20.0",
     "pino": "^10.3.1",
@@ -26,10 +40,12 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/pg": "^8.18.0",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
     "@typescript-eslint/parser": "^8.57.1",
     "eslint": "^9.39.4",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "ws": "^8.18.0"
   }
 }
