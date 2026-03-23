@@ -7,7 +7,7 @@ export async function withCache<T>(
   fetch:      () => Promise<T>,
 ): Promise<T> {
   const cached = await redis.get(key);
-  if (cached) return JSON.parse(cached) as T;
+  if (cached !== null) return JSON.parse(cached) as T;
   const data = await fetch();
   await redis.setEx(key, ttlSeconds, JSON.stringify(data));
   return data;
