@@ -16,7 +16,8 @@ import type { FastifyPluginAsync } from "fastify";
 import type { WebSocket as WS }    from "@fastify/websocket";
 import type { Pool }               from "pg";
 import type { RedisClient }        from "../clients/redis";
-import { KEYS, getEthUsdRate }     from "../clients/redis";
+import { KEYS, getEthUsdRate, EVENT_CHANNELS, makeRedisClient } from "../clients/redis";
+import { verifyJwt }              from "../api/auth";
 import { getTokenList }            from "../utils/db/tokens";
 import { ethPriceToUsd, formatUsd } from "../utils/math";
 import { logger }                  from "../utils/logger";
@@ -36,16 +37,29 @@ function weiToEth(wei: string | null | undefined): string | null {
   } catch { return null; }
 }
 
-// ── Connected clients ─────────────────────────────────────────────────────────
+// ── Connected clients with heartbeat ─────────────────────────────────────────
 
-const clients = new Set<WS>();
+const HEARTBEAT_INTERVAL = 30_000;
+const HEARTBEAT_TIMEOUT  = 10_000;
+
+interface TrackedClient {
+  ws:       WS;
+  alive:    boolean;
+  timer?:   ReturnType<typeof setTimeout>;
+}
+
+const clientMap = new Map<WS, TrackedClient>();
 
 function broadcast(msg: object): void {
-  if (clients.size === 0) return;
+  if (clientMap.size === 0) return;
   const payload = JSON.stringify(msg);
-  for (const ws of clients) {
+  for (const [ws] of clientMap) {
     if (ws.readyState === ws.OPEN) ws.send(payload);
   }
+}
+
+function getClientCount(): number {
+  return clientMap.size;
 }
 
 // ── Token metadata cache ──────────────────────────────────────────────────────
@@ -370,44 +384,72 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
     broadcast({ type: "protocolFeeUpdate", data });
   });
 
-  // events:meta → new_token + tokenList
-  await sub.subscribe("events:meta", (msg) => {
-    let payload: { eventType?: string; tokenAddress?: string; name?: string | null; symbol?: string | null; totalSupply?: string | null };
-    try { payload = JSON.parse(msg) as typeof payload; } catch { return; }
-    if (payload.eventType === "TokenMetaUpdated" && payload.tokenAddress) {
-      const addr = payload.tokenAddress.toLowerCase();
-      const meta = tokenMetaMap.get(addr) ?? { name: null, symbol: null, totalSupply: null, mcapEth: null, sparkline: [] };
-      if (payload.name)        meta.name        = payload.name;
-      if (payload.symbol)      meta.symbol      = payload.symbol;
-      if (payload.totalSupply) meta.totalSupply = typeof payload.totalSupply === "string" && payload.totalSupply.endsWith("n")
-        ? payload.totalSupply.slice(0, -1)
-        : payload.totalSupply;
-      tokenMetaMap.set(addr, meta);
-      return;
-    }
-    if (payload.eventType === "PoolCreated" && payload.tokenAddress) {
-      const addr = payload.tokenAddress.toLowerCase();
-      if (!tokenMetaMap.has(addr)) {
-        tokenMetaMap.set(addr, {
-          name:        payload.name   ?? null,
-          symbol:      payload.symbol ?? null,
-          totalSupply: payload.totalSupply ?? null,
-          mcapEth:     null,
-          sparkline:   [],
-        });
-      } else {
-        // Merge any missing fields
-        const meta = tokenMetaMap.get(addr);
-        if (!meta) return;
-        if (!meta.name        && payload.name)        meta.name        = payload.name;
-        if (!meta.symbol      && payload.symbol)      meta.symbol      = payload.symbol;
-        if (!meta.totalSupply && payload.totalSupply) meta.totalSupply = payload.totalSupply;
+  // stream:meta → new_token + tokenList (read via consumer group)
+  const metaStreamReader = await makeRedisClient(redisUrl);
+  const META_GROUP    = "ws-gateway";
+  const META_CONSUMER = `ws-gateway-${process.pid}`;
+  try {
+    await metaStreamReader.xGroupCreate(EVENT_CHANNELS.meta, META_GROUP, "0", { MKSTREAM: true });
+  } catch (err: any) {
+    if (!err?.message?.includes("BUSYGROUP")) throw err;
+  }
+
+  const readMetaStream = async () => {
+    while (true) {
+      try {
+        const results = await metaStreamReader.xReadGroup(
+          META_GROUP, META_CONSUMER,
+          [{ key: EVENT_CHANNELS.meta, id: ">" }],
+          { COUNT: 20, BLOCK: 2000 },
+        );
+        if (!results) continue;
+        for (const { messages } of results) {
+          for (const { id, message } of messages) {
+            try {
+              const payload = JSON.parse(message.data) as {
+                eventType?: string; tokenAddress?: string;
+                name?: string | null; symbol?: string | null; totalSupply?: string | null;
+              };
+              if (payload.eventType === "TokenMetaUpdated" && payload.tokenAddress) {
+                const addr = payload.tokenAddress.toLowerCase();
+                const meta = tokenMetaMap.get(addr) ?? { name: null, symbol: null, totalSupply: null, mcapEth: null, sparkline: [] };
+                if (payload.name)        meta.name        = payload.name;
+                if (payload.symbol)      meta.symbol      = payload.symbol;
+                if (payload.totalSupply) meta.totalSupply = typeof payload.totalSupply === "string" && payload.totalSupply.endsWith("n")
+                  ? payload.totalSupply.slice(0, -1)
+                  : payload.totalSupply;
+                tokenMetaMap.set(addr, meta);
+              }
+              if (payload.eventType === "PoolCreated" && payload.tokenAddress) {
+                const addr = payload.tokenAddress.toLowerCase();
+                if (!tokenMetaMap.has(addr)) {
+                  tokenMetaMap.set(addr, {
+                    name: payload.name ?? null, symbol: payload.symbol ?? null,
+                    totalSupply: payload.totalSupply ?? null, mcapEth: null, sparkline: [],
+                  });
+                } else {
+                  const meta = tokenMetaMap.get(addr);
+                  if (meta) {
+                    if (!meta.name        && payload.name)        meta.name        = payload.name;
+                    if (!meta.symbol      && payload.symbol)      meta.symbol      = payload.symbol;
+                    if (!meta.totalSupply && payload.totalSupply) meta.totalSupply = payload.totalSupply;
+                  }
+                }
+                lastMetaLoad = 0;
+                broadcast({ type: "new_token", data: payload });
+                refreshTokenMeta(reader).then(() => broadcastTokenList(reader, pool)).catch(() => {});
+              }
+            } catch { /* ignore parse errors */ }
+            await metaStreamReader.xAck(EVENT_CHANNELS.meta, META_GROUP, id);
+          }
+        }
+      } catch (err) {
+        logger.error({ err }, "Meta stream read error");
+        await new Promise((r) => setTimeout(r, 1000));
       }
-      lastMetaLoad = 0;
-      broadcast({ type: "new_token", data: payload });
-      refreshTokenMeta(reader).then(() => broadcastTokenList(reader, pool)).catch(() => {});
     }
-  });
+  };
+  readMetaStream();
 
   // chainlink:rate → tokenList USD refresh
   await sub.subscribe("chainlink:rate", () => {
@@ -417,18 +459,41 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
 
   logger.info("WS Redis subscriptions active");
 
+  // Server-side heartbeat: ping every client, drop if no pong within timeout
   setInterval(() => {
-    for (const ws of clients) { if (ws.readyState !== ws.OPEN) clients.delete(ws); }
-  }, 30_000);
+    for (const [ws, client] of clientMap) {
+      if (!client.alive) {
+        logger.debug("Dropping unresponsive WS client");
+        ws.terminate();
+        clientMap.delete(ws);
+        continue;
+      }
+      client.alive = false;
+      ws.ping();
+    }
+  }, HEARTBEAT_INTERVAL);
 
   setInterval(() => { lastMetaLoad = 0; refreshTokenMeta(reader).catch(() => {}); }, 60_000);
 
   // WS endpoint
-  app.get("/ws", { websocket: true }, (socket) => {
-    clients.add(socket);
-    logger.debug({ total: clients.size }, "WS client connected");
+  app.get<{ Querystring: { token?: string } }>("/ws", { websocket: true }, (socket, req) => {
+    const jwtSecret = process.env.JWT_SECRET;
+    if (jwtSecret) {
+      const token = req.query.token;
+      if (!token || !verifyJwt(token, jwtSecret)) {
+        socket.close(4001, "Unauthorized");
+        return;
+      }
+    }
 
-    // Send current tokenList immediately on connect (sorted by marketCap)
+    const tracked: TrackedClient = { ws: socket, alive: true };
+    clientMap.set(socket, tracked);
+    logger.debug({ total: clientMap.size }, "WS client connected");
+
+    // Mark alive on pong
+    socket.on("pong", () => { tracked.alive = true; });
+
+    // Send current tokenList immediately on connect
     (async () => {
       try {
         if (socket.readyState !== socket.OPEN) return;
@@ -442,7 +507,6 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
             if (meta?.sparkline.length) t.sparkline = meta.sparkline;
           }
         } else {
-          // Cache cold — build full list from DB
           list = (await buildAndCacheTokenList(pool, reader)) as ListItem[];
         }
         if (socket.readyState === socket.OPEN) {
@@ -454,11 +518,20 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
     socket.on("message", (raw) => {
       try {
         const msg = JSON.parse(raw.toString()) as { type?: string };
-        if (msg.type === "ping") socket.send(JSON.stringify({ type: "pong" }));
+        if (msg.type === "ping") {
+          tracked.alive = true;
+          socket.send(JSON.stringify({ type: "pong" }));
+        }
       } catch { /* ignore */ }
     });
 
-    socket.on("close", () => { clients.delete(socket); logger.debug({ total: clients.size }, "WS client disconnected"); });
-    socket.on("error", (err) => { logger.warn({ err }, "WS client error"); clients.delete(socket); });
+    socket.on("close", () => {
+      clientMap.delete(socket);
+      logger.debug({ total: clientMap.size }, "WS client disconnected");
+    });
+    socket.on("error", (err) => {
+      logger.warn({ err }, "WS client error");
+      clientMap.delete(socket);
+    });
   });
 };
