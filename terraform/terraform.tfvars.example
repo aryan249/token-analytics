@@ -1,0 +1,5 @@
+aws_region          = "ap-south-1"
+environment         = "production"
+rds_password        = "CHANGE_ME_strong_password_here"
+github_repo         = "aryan249/token-analytics"
+github_runner_token = "AXXXXXXXXXXXXXXXXXXXXXXX"
