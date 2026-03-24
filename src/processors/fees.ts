@@ -16,6 +16,7 @@ import type {
 
 class FeeProcessor extends BaseProcessor {
   get channel() { return EVENT_CHANNELS.fees; }
+  get groupName() { return "fee-processor"; }
 
   async handle(event: DecodedEvent): Promise<void> {
     if (event.eventType === "PoolFeesDistributed") {

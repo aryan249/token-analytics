@@ -38,17 +38,20 @@ export const TTL = {
   walletState: 120,
 } as const;
 
-// ── Event channels (indexer → processors) ────────────────────────────────────
+// ── Event streams (indexer → processors via Redis Streams) ───────────────────
 
 export const EVENT_CHANNELS = {
-  swap:     "events:swap",      // PoolSwap + PoolStateUpdated → trade + candle
-  fees:     "events:fees",      // PoolFeesDistributed   → fee processor
-  meta:     "events:meta",      // PoolCreated           → token processor
-  price:    "events:price",     // ChainlinkAnswerUpdated → price processor
-  transfer: "events:transfer",  // ERC20Transfer         → holder balances
+  swap:     "stream:swap",      // PoolSwap + PoolStateUpdated → trade + candle
+  fees:     "stream:fees",      // PoolFeesDistributed   → fee processor
+  meta:     "stream:meta",      // PoolCreated           → token processor
+  price:    "stream:price",     // ChainlinkAnswerUpdated → price processor
+  transfer: "stream:transfer",  // ERC20Transfer         → holder balances
 } as const;
 
 export type EventChannel = (typeof EVENT_CHANNELS)[keyof typeof EVENT_CHANNELS];
+
+/** Max stream length before older entries are trimmed (approximate). */
+export const STREAM_MAX_LEN = 10_000;
 
 // ── UI push channels (processors → WebSocket gateway) ────────────────────────
 

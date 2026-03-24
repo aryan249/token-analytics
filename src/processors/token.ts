@@ -29,6 +29,7 @@ async function fetchTokenMetadata(
 
 class TokenProcessor extends BaseProcessor {
   get channel() { return EVENT_CHANNELS.meta; }
+  get groupName() { return "token-processor"; }
 
   // txHash → tokenAddress for royalty linking (same transaction)
   private recentTxTokens = new Map<string, string>();
@@ -65,13 +66,15 @@ class TokenProcessor extends BaseProcessor {
 
       // Publish resolved metadata so the WS gateway can update its tokenMetaMap
       // (totalSupply is fetched via RPC, not present in the original PoolCreated event)
-      await this.publisher.publish(EVENT_CHANNELS.meta, JSON.stringify({
-        eventType:   "TokenMetaUpdated",
-        tokenAddress: e.tokenAddress,
-        name,
-        symbol,
-        totalSupply:  totalSupply != null ? totalSupply.toString() + "n" : null,
-      }));
+      await this.publisher.xAdd(EVENT_CHANNELS.meta, "*", {
+        data: JSON.stringify({
+          eventType:   "TokenMetaUpdated",
+          tokenAddress: e.tokenAddress,
+          name,
+          symbol,
+          totalSupply:  totalSupply != null ? totalSupply.toString() + "n" : null,
+        }),
+      });
 
       // Cache txHash so ManagerInitializedFeeSplit (same tx) can link to this token
       this.recentTxTokens.set(e.transactionHash, e.tokenAddress.toLowerCase());

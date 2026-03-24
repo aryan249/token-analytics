@@ -6,6 +6,7 @@ import type { DecodedEvent, ChainlinkAnswerUpdatedEvent }  from "../types/events
 
 class PriceProcessor extends BaseProcessor {
   get channel() { return EVENT_CHANNELS.price; }
+  get groupName() { return "price-processor"; }
 
   async handle(event: DecodedEvent): Promise<void> {
     if (event.eventType !== "ChainlinkAnswerUpdated") return;
@@ -13,8 +14,8 @@ class PriceProcessor extends BaseProcessor {
 
     // current has 8 decimals — e.g. 300000000000 = $3000.00000000
     await setEthUsdRate(this.publisher, e.current);
+    await this.publisher.publish("chainlink:rate", e.current.toString());
 
-    // Human readable: divide by 1e8
     const usd = Number(e.current) / 1e8;
     logger.info({ rate: `$${usd.toFixed(2)}`, raw: e.current.toString() }, "ETH/USD rate updated");
   }
