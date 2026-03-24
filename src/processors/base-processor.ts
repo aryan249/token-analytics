@@ -113,9 +113,9 @@ export abstract class BaseProcessor {
 
         for (const entry of stale) {
           if (entry.millisecondsSinceLastDelivery < CLAIM_IDLE_MS) continue;
-          if (entry.deliveryCount > 5) {
+          if (entry.deliveriesCounter > 5) {
             await this.consumer.xAck(this.channel, this.groupName, entry.id);
-            logger.warn({ messageId: entry.id, deliveries: entry.deliveryCount }, "Dead-lettered message");
+            logger.warn({ messageId: entry.id, deliveries: entry.deliveriesCounter }, "Dead-lettered message");
             continue;
           }
           const claimed = await this.consumer.xClaim(
