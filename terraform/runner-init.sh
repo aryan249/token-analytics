@@ -1,8 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-# Install Docker
-dnf install -y docker git
+# Install dependencies (libicu needed by .NET runtime in GitHub runner)
+dnf install -y docker git libicu openssl-libs krb5-libs zlib
+
 systemctl enable docker
 systemctl start docker
 
@@ -11,7 +12,7 @@ curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
 dnf install -y nodejs
 
 # Create runner user
-useradd -m runner
+useradd -m runner || true
 usermod -aG docker runner
 
 # Install GitHub Actions runner
@@ -22,7 +23,7 @@ tar xzf actions-runner.tar.gz
 rm actions-runner.tar.gz
 chown -R runner:runner /home/runner
 
-# Configure runner
+# Configure runner (skip installdependencies.sh — deps installed above)
 su - runner -c "./config.sh --unattended \
   --url https://github.com/${github_repo} \
   --token ${runner_token} \
