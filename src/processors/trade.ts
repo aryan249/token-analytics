@@ -33,6 +33,11 @@ class TradeProcessor extends BaseProcessor {
     } catch (err: any) {
       if (!err?.message?.includes("BUSYGROUP")) throw err;
     }
+
+    // Periodically flush buffered PoolStateUpdated events
+    setInterval(() => {
+      this.flushPendingPoolState().catch(() => {});
+    }, 5_000);
   }
 
   private async drainTransfers(): Promise<void> {
