@@ -1,0 +1,46 @@
+{{- range $name, $cfg := .Values.processors }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: processor-{{ $name }}
+  namespace: {{ $.Values.namespace }}
+  labels:
+    app: processor-{{ $name }}
+    {{- include "token-analytics.labels" $ | nindent 4 }}
+spec:
+  serviceName: processor-{{ $name }}
+  replicas: {{ $cfg.replicas }}
+  selector:
+    matchLabels:
+      app: processor-{{ $name }}
+  template:
+    metadata:
+      labels:
+        app: processor-{{ $name }}
+    spec:
+      {{- include "token-analytics.securityContext" $ | nindent 6 }}
+      containers:
+        - name: processor-{{ $name }}
+          image: {{ include "token-analytics.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- include "token-analytics.containerSecurity" $ | nindent 10 }}
+          command: ["npx", "ts-node", "--transpile-only", "src/processors/{{ $name }}.ts"]
+          envFrom:
+            {{- include "token-analytics.envFrom" $ | nindent 12 }}
+          resources:
+            {{- toYaml $cfg.resources | nindent 12 }}
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: processor-{{ $name }}
+  namespace: {{ $.Values.namespace }}
+  labels:
+    app: processor-{{ $name }}
+spec:
+  clusterIP: None
+  selector:
+    app: processor-{{ $name }}
+{{- end }}

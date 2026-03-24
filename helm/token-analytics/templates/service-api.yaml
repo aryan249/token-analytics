@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: api
+    {{- include "token-analytics.labels" . | nindent 4 }}
+  annotations:
+    # Sticky sessions for WebSocket connections
+    service.beta.kubernetes.io/aws-load-balancer-stickiness-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-stickiness-type: "source_ip"
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    app: api
+---
+# Headless service for indexer StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: indexer
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: indexer
+spec:
+  clusterIP: None
+  selector:
+    app: indexer

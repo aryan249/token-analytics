@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: api
+    {{- include "token-analytics.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      {{- include "token-analytics.securityContext" . | nindent 6 }}
+      containers:
+        - name: api
+          image: {{ include "token-analytics.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- include "token-analytics.containerSecurity" . | nindent 10 }}
+          command: ["npx", "ts-node", "--transpile-only", "src/api/server.ts"]
+          ports:
+            - containerPort: {{ .Values.api.port }}
+              protocol: TCP
+          envFrom:
+            {{- include "token-analytics.envFrom" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.api.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.api.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      restartPolicy: Always
