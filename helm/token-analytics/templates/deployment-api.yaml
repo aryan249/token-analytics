@@ -22,7 +22,7 @@ spec:
           image: {{ include "token-analytics.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- include "token-analytics.containerSecurity" . | nindent 10 }}
-          command: ["npx", "ts-node", "--transpile-only", "src/api/server.ts"]
+          command: ["node", "dist/api/server.js"]
           ports:
             - containerPort: {{ .Values.api.port }}
               protocol: TCP

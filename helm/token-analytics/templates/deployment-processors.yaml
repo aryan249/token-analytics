@@ -25,7 +25,7 @@ spec:
           image: {{ include "token-analytics.image" $ }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
           {{- include "token-analytics.containerSecurity" $ | nindent 10 }}
-          command: ["npx", "ts-node", "--transpile-only", "src/processors/{{ $name }}.ts"]
+          command: ["node", "dist/processors/{{ $name }}.js"]
           envFrom:
             {{- include "token-analytics.envFrom" $ | nindent 12 }}
           resources:
