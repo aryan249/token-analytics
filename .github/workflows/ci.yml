@@ -1,0 +1,122 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main, feat/*]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: token-analytics
+  EKS_CLUSTER: token-analytics
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  lint-and-build:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit --skipLibCheck
+
+  docker-build-push:
+    needs: lint-and-build
+    if: github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    permissions:
+      id-token: write
+      contents: write
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Build and push Docker image
+        id: build
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker build -t $IMAGE .
+          docker tag $IMAGE $REGISTRY/$ECR_REPOSITORY:latest
+          docker push $IMAGE
+          docker push $REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+      - name: Update Helm values with new image tag
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|" helm/token-analytics/values.yaml
+          sed -i "s|repository:.*|repository: $REGISTRY/$ECR_REPOSITORY|" helm/token-analytics/values.yaml
+
+      - name: Commit image tag update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add helm/token-analytics/values.yaml
+          git diff --cached --quiet || git commit -m "chore: update image tag to ${IMAGE_TAG:0:8}"
+          git push
+
+  deploy:
+    needs: docker-build-push
+    if: github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
+
+      - name: Install External Secrets Operator (if not present)
+        run: |
+          helm repo add external-secrets https://charts.external-secrets.io
+          helm repo update
+          helm upgrade --install external-secrets external-secrets/external-secrets \
+            --namespace external-secrets --create-namespace \
+            --set installCRDs=true \
+            --wait --timeout 5m
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install token-analytics helm/token-analytics \
+            --namespace token-analytics --create-namespace \
+            --wait --timeout 10m
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n token-analytics
+          kubectl get svc -n token-analytics
+          kubectl get ingress -n token-analytics
+
+      - name: Print API endpoint
+        run: |
+          echo "=== API Endpoint ==="
+          kubectl get ingress -n token-analytics -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || \
+          kubectl get svc api -n token-analytics -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || \
+          echo "Endpoint not yet available — check 'kubectl get ingress -n token-analytics'"
