@@ -2,9 +2,14 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Install dependencies first (cached layer)
 COPY package*.json ./
-RUN npm install
+RUN npm ci --omit=dev && npm cache clean --force
 
-COPY . .
+# Copy source and static assets
+COPY src/ ./src/
+COPY public/ ./public/
+COPY tsconfig.json ./
 
-CMD ["ts-node", "--transpile-only", "src/indexer/main.ts"]
+# Default command (overridden per service in docker-compose)
+CMD ["npx", "ts-node", "--transpile-only", "src/indexer/main.ts"]
