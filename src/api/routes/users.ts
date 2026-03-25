@@ -30,8 +30,8 @@ export const userRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     "/:wallet/positions",
     async (req, reply) => {
       const wallet = req.params.wallet.toLowerCase();
-      const limit  = Math.min(Number(req.query.limit  ?? 50), 200);
-      const offset = Math.max(Number(req.query.offset ?? 0),  0);
+      const limit  = Math.min(Number(req.query.limit ?? 50) || 50, 200);
+      const offset = Math.max(Number(req.query.offset ?? 0) || 0, 0);
 
       const [ethUsdRate, result] = await Promise.all([
         getEthUsdRate(redis),
@@ -122,7 +122,7 @@ export const userRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       const wallet = req.params.wallet.toLowerCase();
 
       const data = await withCache(
-        redis, KEYS.apiRoyalties(wallet), 60,
+        redis, KEYS.apiRoyalties(wallet), 15,
         async () => {
           const [summary, ethUsdRate] = await Promise.all([
             getWalletRoyalties(pool, wallet),
@@ -161,8 +161,8 @@ export const userRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     "/:wallet/activity",
     async (req, reply) => {
       const wallet = req.params.wallet.toLowerCase();
-      const limit  = Math.min(Number(req.query.limit  ?? 50), 200);
-      const offset = Math.max(Number(req.query.offset ?? 0),  0);
+      const limit  = Math.min(Number(req.query.limit ?? 50) || 50, 200);
+      const offset = Math.max(Number(req.query.offset ?? 0) || 0, 0);
 
       const [result, ethUsdRate] = await Promise.all([
         getWalletActivity(pool, wallet, limit, offset),

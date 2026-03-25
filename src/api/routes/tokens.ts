@@ -190,8 +190,8 @@ export const tokenRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         return reply.status(400).send({ error: `sort must be one of: ${[...SORT_OPTIONS].join(", ")}` });
       }
       const sort   = sortParam as SortOption;
-      const limit  = Math.min(Number(req.query.limit  ?? 50), 200);
-      const offset = Math.max(Number(req.query.offset ?? 0),  0);
+      const limit  = Math.min(Number(req.query.limit  ?? 50) || 50, 200);
+      const offset = Math.max(Number(req.query.offset ?? 0)  || 0,  0);
 
       let all: TrendingToken[];
       const cached = await redis.get(KEYS.apiTokenList());
@@ -203,7 +203,7 @@ export const tokenRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
           getEthUsdRate(redis),
         ]);
         all = rows.map((r) => buildTrendingToken(r, ethUsdRate));
-        await redis.setEx(KEYS.apiTokenList(), 30, JSON.stringify(all));
+        await redis.setEx(KEYS.apiTokenList(), 5, JSON.stringify(all));
       }
 
       return reply.send(sortTokens(all, sort).slice(offset, offset + limit));
@@ -216,7 +216,7 @@ export const tokenRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     async (req, reply) => {
       const address = req.params.address.toLowerCase();
 
-      const data = await withCache(redis, KEYS.apiTokenDetail(address), 30, async () => {
+      const data = await withCache(redis, KEYS.apiTokenDetail(address), 5, async () => {
         const [row, ethUsdRate] = await Promise.all([
           getTokenDetail(pool, address),
           getEthUsdRate(redis),
@@ -265,7 +265,7 @@ export const tokenRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       }
 
       const ethUsdRate = await getEthUsdRate(redis);
-      const all = await withCache(redis, KEYS.apiCandles(address, resolution), 30, () =>
+      const all = await withCache(redis, KEYS.apiCandles(address, resolution), 10, () =>
         getTokenCandles(pool, address, resolution)
       );
 

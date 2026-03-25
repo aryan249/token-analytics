@@ -1,9 +1,12 @@
 import "dotenv/config";
 import path            from "path";
+import crypto          from "crypto";
 import Fastify         from "fastify";
 import cors            from "@fastify/cors";
+import rateLimit       from "@fastify/rate-limit";
 import fastifyStatic   from "@fastify/static";
 import websocketPlugin from "@fastify/websocket";
+import Redis           from "ioredis";
 import { createPublicClient, http, parseAbi } from "viem";
 import { base } from "viem/chains";
 import { makePool }          from "../clients/postgres";
@@ -55,10 +58,28 @@ async function main(): Promise<void> {
 
   const app = Fastify({ logger: false });
 
-  await app.register(cors,            { origin: true });
+  // Global error handler
+  app.setErrorHandler((err, req, reply) => {
+    logger.error({ err, url: req.url, method: req.method, requestId: req.id }, "Unhandled route error");
+    reply.status(500).send({ error: "Internal server error" });
+  });
+
+  // Request ID + logging
+  app.addHook("onRequest", async (req) => {
+    (req as any).requestId = req.id ?? crypto.randomUUID();
+  });
+
+  await app.register(cors, { origin: true });
+  await app.register(rateLimit, {
+    max: 100,
+    timeWindow: "1 minute",
+    allowList: ["127.0.0.1"],
+    keyGenerator: (req) => req.ip,
+    redis: new Redis(redisUrl),
+  });
   await app.register(websocketPlugin, { options: { maxPayload: 256 } });
 
-  // JWT auth hook — only active when JWT_SECRET is set
+  // JWT auth hook
   if (jwtSecret) {
     app.addHook("onRequest", jwtAuthHook(jwtSecret));
     logger.info("JWT authentication enabled");
@@ -76,7 +97,7 @@ async function main(): Promise<void> {
     await app.register(authRoutes, { redis, jwtSecret, jwtExpiry, prefix: "/auth" });
   }
 
-  // REST routes (protected when JWT_SECRET is set)
+  // REST routes
   await app.register(tokenRoutes,  { pool: readPool, redis, prefix: "/tokens" });
   await app.register(userRoutes,   { pool: readPool, redis, prefix: "/users"  });
   await app.register(statsRoutes,  { pool: readPool, redis, prefix: "/stats"  });
@@ -88,11 +109,24 @@ async function main(): Promise<void> {
     decorateReply: false,
   });
 
-  // WebSocket gateway (shares the same port)
+  // WebSocket gateway
   await app.register(gatewayPlugin, { redisUrl, pool: readPool });
 
   await app.listen({ port, host: "0.0.0.0" });
   logger.info({ port }, "API + WebSocket server listening");
+
+  // Graceful shutdown
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, "Shutting down API server");
+    await app.close();
+    await redis.quit();
+    await readPool.end();
+    await writePool.end();
+    process.exit(0);
+  };
+
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT",  () => void shutdown("SIGINT"));
 }
 
 main().catch((err) => { console.error("Fatal:", err); process.exit(1); });

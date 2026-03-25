@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Token Detail - FLaunch Analytics</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <a href="/" class="logo">FLaunch <span class="logo-sub">Analytics</span></a>
+    </div>
+  </header>
+
+  <main class="container detail-page">
+    <!-- Token header -->
+    <section class="token-header" id="token-header">
+      <div class="loading">Loading token...</div>
+    </section>
+
+    <!-- Chart -->
+    <section class="chart-section">
+      <div class="chart-controls" id="chart-controls">
+        <button class="res-btn" data-res="1m">1m</button>
+        <button class="res-btn" data-res="15m">15m</button>
+        <button class="res-btn active" data-res="1h">1h</button>
+        <button class="res-btn" data-res="4h">4h</button>
+        <button class="res-btn" data-res="1d">1d</button>
+      </div>
+      <div id="chart" class="chart-container"></div>
+    </section>
+
+    <!-- Tabs: Trades / Holders / Royalties -->
+    <section class="tabs-section">
+      <div class="tab-bar">
+        <button class="tab-btn active" data-tab="trades">Trades</button>
+        <button class="tab-btn" data-tab="holders">Holders</button>
+        <button class="tab-btn" data-tab="royalties">Royalties</button>
+      </div>
+
+      <div class="tab-content" id="tab-trades">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Amount</th>
+              <th>Price</th>
+              <th>Trader</th>
+              <th>Time</th>
+              <th>Tx</th>
+            </tr>
+          </thead>
+          <tbody id="trades-tbody">
+            <tr><td colspan="7" class="loading">Loading...</td></tr>
+          </tbody>
+        </table>
+        <button class="load-more-btn" id="load-more-trades" style="display:none">Load more</button>
+      </div>
+
+      <div class="tab-content hidden" id="tab-holders">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Wallet</th>
+              <th>Balance</th>
+              <th>Value (USD)</th>
+              <th>% of Supply</th>
+            </tr>
+          </thead>
+          <tbody id="holders-tbody">
+            <tr><td colspan="4" class="loading">Loading...</td></tr>
+          </tbody>
+        </table>
+        <button class="load-more-btn" id="load-more-holders" style="display:none">Load more</button>
+      </div>
+
+      <div class="tab-content hidden" id="tab-royalties">
+        <div id="royalties-content" class="royalties-grid"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
