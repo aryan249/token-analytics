@@ -16,7 +16,6 @@ import type { WebSocket as WS }    from "@fastify/websocket";
 import type { Pool }               from "pg";
 import type { RedisClient }        from "../clients/redis";
 import { KEYS, getEthUsdRate, EVENT_CHANNELS, UI_STREAMS, makeRedisClient } from "../clients/redis";
-import { verifyJwt }              from "../api/auth";
 import { getTokenList }            from "../utils/db/tokens";
 import { ethPriceToUsd, formatUsd } from "../utils/math";
 import { logger }                  from "../utils/logger";
@@ -352,15 +351,6 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
   const GW_GROUP = "ws-gateway";
   const GW_CONSUMER = `ws-gw-${process.pid}`;
 
-  async function ensureGroup(stream: string): Promise<void> {
-    const client = await makeRedisClient(redisUrl);
-    try {
-      await client.xGroupCreate(stream, GW_GROUP, "0", { MKSTREAM: true });
-    } catch (err: any) {
-      if (!err?.message?.includes("BUSYGROUP")) throw err;
-    }
-    return client as any;
-  }
 
   async function readStream(
     stream: string,
@@ -482,10 +472,7 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
   setInterval(() => { lastMetaLoad = 0; refreshTokenMeta(reader).catch(() => {}); }, 60_000);
 
   // WS endpoint
-  app.get<{ Querystring: { token?: string } }>("/ws", { websocket: true }, (socket, req) => {
-    const jwtSecret = process.env.JWT_SECRET;
-    // WS is read-only, allow unauthenticated connections for dashboard
-    // JWT validation is optional — if token is provided and invalid, still allow
+  app.get<{ Querystring: { token?: string } }>("/ws", { websocket: true }, (socket) => {
 
     const tracked: TrackedClient = { ws: socket, alive: true };
     clientMap.set(socket, tracked);

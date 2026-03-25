@@ -88,7 +88,7 @@ export async function flushTokenCache(client: RedisClient, tokenAddress: string)
   await client.del(keys);
 }
 
-export async function publishTokenUpdate(client: RedisClient, tokenAddress: string, payload: object): Promise<void> {
+export async function publishTokenUpdate(client: RedisClient, _tokenAddress: string, payload: object): Promise<void> {
   await client.xAdd(UI_STREAMS.trades, "*", { data: JSON.stringify(payload) },
     { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAX_LEN } });
 }
@@ -103,7 +103,7 @@ export async function publishWalletUpdate(client: RedisClient, walletAddress: st
     { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAX_LEN } });
 }
 
-export async function publishCoinFeeUpdate(client: RedisClient, tokenAddress: string, payload: object): Promise<void> {
+export async function publishCoinFeeUpdate(client: RedisClient, _tokenAddress: string, payload: object): Promise<void> {
   await client.xAdd(UI_STREAMS.fees, "*", { data: JSON.stringify(payload) },
     { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAX_LEN } });
 }
