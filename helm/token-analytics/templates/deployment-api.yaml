@@ -17,6 +17,7 @@ spec:
         app: api
     spec:
       {{- include "token-analytics.securityContext" . | nindent 6 }}
+      {{- include "token-analytics.antiAffinity" (dict "app" "api") | nindent 6 }}
       containers:
         - name: api
           image: {{ include "token-analytics.image" . }}
@@ -42,4 +43,10 @@ spec:
               port: {{ .Values.api.port }}
             initialDelaySeconds: 15
             periodSeconds: 20
+          startupProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.api.port }}
+            failureThreshold: 10
+            periodSeconds: 5
       restartPolicy: Always

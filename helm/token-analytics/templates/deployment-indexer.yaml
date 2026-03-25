@@ -28,4 +28,9 @@ spec:
             {{- include "token-analytics.envFrom" . | nindent 12 }}
           resources:
             {{- toYaml .Values.indexer.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["node", "-e", "process.exit(0)"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
       restartPolicy: Always

@@ -20,6 +20,7 @@ spec:
         app: processor-{{ $name }}
     spec:
       {{- include "token-analytics.securityContext" $ | nindent 6 }}
+      {{- include "token-analytics.antiAffinity" (dict "app" (printf "processor-%s" $name)) | nindent 6 }}
       containers:
         - name: processor-{{ $name }}
           image: {{ include "token-analytics.image" $ }}
@@ -30,6 +31,11 @@ spec:
             {{- include "token-analytics.envFrom" $ | nindent 12 }}
           resources:
             {{- toYaml $cfg.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["node", "-e", "process.exit(0)"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
       restartPolicy: Always
 ---
 apiVersion: v1
