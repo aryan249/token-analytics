@@ -1,6 +1,6 @@
 image:
   repository: "207270671706.dkr.ecr.ap-south-1.amazonaws.com/token-analytics"  # set by CI: <account>.dkr.ecr.<region>.amazonaws.com/token-analytics
-  tag: "v1774363154"
+  tag: "v1774437458"
   pullPolicy: Always
 
 namespace: token-analytics
@@ -26,20 +26,20 @@ indexer:
 # ── Processors (StatefulSets with consumer groups) ────────────────────────────
 processors:
   trade:
-    replicas: 2
+    replicas: 1
     resources:
-      requests: { cpu: 100m, memory: 256Mi }
-      limits:   { cpu: 500m, memory: 512Mi }
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 250m, memory: 256Mi }
   token:
     replicas: 1
     resources:
       requests: { cpu: 50m, memory: 128Mi }
       limits:   { cpu: 250m, memory: 256Mi }
   candle:
-    replicas: 2
+    replicas: 1
     resources:
-      requests: { cpu: 100m, memory: 256Mi }
-      limits:   { cpu: 500m, memory: 512Mi }
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 250m, memory: 256Mi }
   position:
     replicas: 1
     resources:
