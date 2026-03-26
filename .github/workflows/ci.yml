@@ -16,9 +16,9 @@ jobs:
   lint-and-build:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.1.7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4.0.3
         with:
           node-version: 20
           cache: npm
@@ -38,26 +38,17 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/devops'
     runs-on: self-hosted
     permissions:
-      id-token: write
       contents: write
-    outputs:
-      image: ${{ steps.build.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.1.7
 
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - uses: aws-actions/amazon-ecr-login@v2
-        id: ecr
+      - name: Login to ECR
+        run: aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin 207270671706.dkr.ecr.$AWS_REGION.amazonaws.com
 
       - name: Build and push Docker image
         id: build
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
+          REGISTRY=207270671706.dkr.ecr.$AWS_REGION.amazonaws.com
           IMAGE=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker build -t $IMAGE .
           docker tag $IMAGE $REGISTRY/$ECR_REPOSITORY:latest
@@ -66,9 +57,8 @@ jobs:
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
       - name: Update Helm values with new image tag
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
+          REGISTRY=207270671706.dkr.ecr.$AWS_REGION.amazonaws.com
           sed -i "s|tag:.*|tag: \"$IMAGE_TAG\"|" helm/token-analytics/values.yaml
           sed -i "s|repository:.*|repository: $REGISTRY/$ECR_REPOSITORY|" helm/token-analytics/values.yaml
 
@@ -87,7 +77,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.1.7
         with:
           ref: ${{ github.ref }}
 
