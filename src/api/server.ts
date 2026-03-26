@@ -60,8 +60,11 @@ async function main(): Promise<void> {
 
   // Global error handler
   app.setErrorHandler((err, req, reply) => {
+    if (err.statusCode === 429) {
+      return reply.status(429).send({ error: err.message });
+    }
     logger.error({ err, url: req.url, method: req.method, requestId: req.id }, "Unhandled route error");
-    reply.status(500).send({ error: "Internal server error" });
+    reply.status(err.statusCode ?? 500).send({ error: err.message ?? "Internal server error" });
   });
 
   // Request ID + logging
