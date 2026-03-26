@@ -44,8 +44,8 @@ export abstract class BaseProcessor {
     await this.ensureConsumerGroup(this.channel, this.groupName);
 
     this.running = true;
-    this.readLoop();
-    this.claimLoop();
+    this.readLoop().catch((err) => { logger.fatal({ err, stream: this.channel }, "Read loop crashed"); process.exit(1); });
+    this.claimLoop().catch((err) => { logger.error({ err, stream: this.channel }, "Claim loop crashed"); });
 
     logger.info(
       { stream: this.channel, group: this.groupName, consumer: this.consumerName },
@@ -84,12 +84,25 @@ export abstract class BaseProcessor {
 
         for (const { messages } of results) {
           for (const { id, message } of messages) {
-            try {
-              const event = JSON.parse(message.data, bigIntReviver) as DecodedEvent;
-              await this.handle(event);
-              await this.consumer.xAck(this.channel, this.groupName, id);
-            } catch (err) {
-              logger.error({ err, stream: this.channel, messageId: id }, "Handle error");
+            let handled = false;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                const event = JSON.parse(message.data, bigIntReviver) as DecodedEvent;
+                await this.handle(event);
+                await this.consumer.xAck(this.channel, this.groupName, id);
+                handled = true;
+                break;
+              } catch (err) {
+                if (attempt === 3) {
+                  logger.error({ err, stream: this.channel, messageId: id, attempt }, "Handle failed after retries");
+                } else {
+                  logger.warn({ stream: this.channel, messageId: id, attempt }, "Handle retry");
+                  await new Promise((r) => setTimeout(r, 1000 * attempt));
+                }
+              }
+            }
+            if (!handled) {
+              // Leave unacked — claimLoop will pick it up later or dead-letter after 5 failures
             }
           }
         }

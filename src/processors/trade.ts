@@ -36,7 +36,7 @@ class TradeProcessor extends BaseProcessor {
 
     // Periodically flush buffered PoolStateUpdated events
     setInterval(() => {
-      this.flushPendingPoolState().catch(() => {});
+      this.flushPendingPoolState().catch((err) => logger.debug({ err }, 'Flush pending pool state error'));
     }, 5_000);
   }
 
@@ -47,7 +47,7 @@ class TradeProcessor extends BaseProcessor {
       const results = await this.transferReader.xReadGroup(
         TRANSFER_GROUP, consumer,
         [{ key: stream, id: ">" }],
-        { COUNT: 100, BLOCK: 0 },
+        { COUNT: 100, BLOCK: 100 },
       );
       if (!results) return;
       for (const { messages } of results) {
@@ -64,11 +64,11 @@ class TradeProcessor extends BaseProcessor {
                 }
               }
             }
-          } catch { /* ignore */ }
+          } catch (err) { logger.debug({ err }, "Ignored error"); }
           await this.transferReader.xAck(stream, TRANSFER_GROUP, id);
         }
       }
-    } catch { /* non-fatal */ }
+    } catch (err) { logger.debug({ err }, "Non-fatal error"); }
   }
 
   private async applyPoolState(e: PoolStateUpdatedEvent): Promise<boolean> {
@@ -162,7 +162,7 @@ class TradeProcessor extends BaseProcessor {
     if (tr?.total_supply) {
       try {
         marketCapEth = (e.priceEth * BigInt(tr.total_supply) / (10n ** 18n)).toString();
-      } catch { /* ignore */ }
+      } catch (err) { logger.debug({ err }, "Ignored error"); }
     }
 
     // Derive phase from which sub-pool was active
