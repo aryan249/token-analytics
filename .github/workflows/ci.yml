@@ -26,7 +26,12 @@ jobs:
       - run: npm ci
 
       - name: Type check
-        run: npx tsc --noEmit --skipLibCheck
+        run: |
+          npx tsc --noEmit 2>&1 | grep -v "node_modules/" > /tmp/tsc-out.txt || true
+          if grep -q "error TS" /tmp/tsc-out.txt; then
+            cat /tmp/tsc-out.txt
+            exit 1
+          fi
 
   docker-build-push:
     needs: lint-and-build
