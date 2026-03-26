@@ -33,9 +33,10 @@ spec:
             {{- toYaml $cfg.resources | nindent 12 }}
           livenessProbe:
             exec:
-              command: ["node", "-e", "process.exit(0)"]
+              command: ["node", "-e", "try{require('fs').statSync('/proc/1/status');process.exit(0)}catch{process.exit(1)}"]
             initialDelaySeconds: 15
             periodSeconds: 30
+            failureThreshold: 3
       restartPolicy: Always
 ---
 apiVersion: v1
