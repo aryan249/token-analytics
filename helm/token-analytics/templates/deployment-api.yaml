@@ -49,4 +49,5 @@ spec:
               port: {{ .Values.api.port }}
             failureThreshold: 10
             periodSeconds: 5
+      {{- include "token-analytics.tmpVolume" . | nindent 6 }}
       restartPolicy: Always
