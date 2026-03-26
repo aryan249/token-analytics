@@ -30,7 +30,7 @@ jobs:
 
   docker-build-push:
     needs: lint-and-build
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/devops'
     runs-on: self-hosted
     permissions:
       id-token: write
@@ -77,7 +77,7 @@ jobs:
 
   deploy:
     needs: docker-build-push
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/devops'
     runs-on: self-hosted
     permissions:
       id-token: write
