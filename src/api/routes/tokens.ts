@@ -7,7 +7,7 @@ import {
   type TokenListRow, type TokenDetailRow,
 } from "../../utils/db/tokens";
 import { getTokenHolders }  from "../../utils/db/holders";
-import { ethPriceToUsd, formatUsd } from "../../utils/math";
+import { ethPriceToUsd, formatUsd, weiToEth } from "../../utils/math";
 import { RESOLUTIONS }      from "../../utils/constants";
 import { getTokenCandles }  from "../../utils/db/tokens";
 
@@ -20,19 +20,6 @@ type SortOption = "marketCap" | "volume" | "trades" | "newest";
 
 // ── Shared shape builders ─────────────────────────────────────────────────────
 
-/** Convert a raw wei bigint string to a human-readable ETH decimal string. */
-function weiToEth(wei: string | null | undefined): string | null {
-  if (wei == null) return null;
-  try {
-    const n = BigInt(wei);
-    if (n === 0n) return "0";
-    const WAD = 10n ** 18n;
-    const whole = n / WAD;
-    const frac  = n % WAD;
-    if (frac === 0n) return whole.toString();
-    return `${whole}.${frac.toString().padStart(18, "0").replace(/0+$/, "")}`;
-  } catch { return null; }
-}
 
 interface HourDataPoint {
   periodStartUnix: number;
@@ -262,7 +249,7 @@ export const tokenRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   // ── GET /tokens/:address/candles ─────────────────────────────────────────────
   app.get<{
     Params:      { address: string };
-    Querystring: { resolution?: string; from?: string; to?: string };
+    Querystring: { resolution?: string; from?: string; to?: string; limit?: string };
   }>(
     "/:address/candles",
     async (req, reply) => {
@@ -273,9 +260,28 @@ export const tokenRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         return reply.status(400).send({ error: `resolution must be one of: ${[...RESOLUTIONS].join(", ")}` });
       }
 
+      let from: bigint | undefined;
+      let to:   bigint | undefined;
+      if (req.query.from || req.query.to) {
+        try {
+          if (req.query.from) from = BigInt(req.query.from);
+          if (req.query.to)   to   = BigInt(req.query.to);
+        } catch {
+          return reply.status(400).send({ error: "from and to must be valid unix timestamps" });
+        }
+      }
+
+      const limit = req.query.limit ? parseInt(req.query.limit, 10) : undefined;
+      if (limit != null && (isNaN(limit) || limit < 1)) {
+        return reply.status(400).send({ error: "limit must be a positive integer" });
+      }
+
+      const cacheKey = KEYS.apiCandles(address, resolution)
+        + (from ? `:${from}` : "") + (to ? `:${to}` : "") + (limit ? `:${limit}` : "");
+
       const ethUsdRate = await getEthUsdRate(redis);
-      const all = await withCache(redis, KEYS.apiCandles(address, resolution), 10, () =>
-        getTokenCandles(pool, address, resolution)
+      const all = await withCache(redis, cacheKey, 10, () =>
+        getTokenCandles(pool, address, resolution, from, to, limit)
       );
 
       // Enrich with USD prices
@@ -287,16 +293,6 @@ export const tokenRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
         closeUSD: ethUsdRate ? formatUsd(ethPriceToUsd(BigInt(c.closeEth), ethUsdRate)) : null,
         volumeUSD: ethUsdRate ? formatUsd(ethPriceToUsd(BigInt(c.volumeEth), ethUsdRate)) : null,
       }));
-
-      if (req.query.from || req.query.to) {
-        try {
-          const to   = req.query.to   ? BigInt(req.query.to)   : BigInt(Math.floor(Date.now() / 1000));
-          const from = req.query.from ? BigInt(req.query.from) : 0n;
-          return reply.send(enriched.filter((c) => BigInt(c.bucketTime) >= from && BigInt(c.bucketTime) <= to));
-        } catch {
-          return reply.status(400).send({ error: "from and to must be valid unix timestamps" });
-        }
-      }
 
       return reply.send(enriched);
     },
