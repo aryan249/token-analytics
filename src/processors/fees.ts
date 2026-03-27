@@ -80,10 +80,12 @@ class FeeProcessor extends BaseProcessor {
 
       await invalidate(this.publisher, KEYS.apiRoyalties(e.recipient));
       await publishWalletUpdate(this.publisher, e.recipient, {
-        type:      "fee_withdrawal",
-        recipient: e.recipient,
-        token:     e.token,
-        amountEth: e.amount.toString(),
+        type:           "fee_withdrawal",
+        recipient:      e.recipient,
+        tokenAddress:   e.token,
+        amountEth:      e.amount.toString(),
+        txHash:         e.transactionHash,
+        blockTimestamp: e.blockTimestamp.toString(),
       });
 
       logger.debug({ id: e.id, recipient: e.recipient, amount: e.amount.toString() }, "Fee escrow withdrawal written");
