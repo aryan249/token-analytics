@@ -15,10 +15,11 @@ import type { FastifyPluginAsync } from "fastify";
 import type { WebSocket as WS }    from "@fastify/websocket";
 import type { Pool }               from "pg";
 import type { RedisClient }        from "../clients/redis";
-import { KEYS, getEthUsdRate, EVENT_CHANNELS, UI_STREAMS, makeRedisClient } from "../clients/redis";
+import { KEYS, getEthUsdRate, PUBSUB_CHANNELS, makeRedisClient } from "../clients/redis";
 import { WAD } from "../utils/constants";
 import { getTokenList }            from "../utils/db/tokens";
 import { ethPriceToUsd, formatUsd, weiToEth } from "../utils/math";
+import { wsClientsConnected, wsMessagesBroadcast, errorsTotal } from "../utils/metrics";
 import { logger }                  from "../utils/logger";
 
 
@@ -37,6 +38,8 @@ const clientMap = new Map<WS, TrackedClient>();
 function broadcast(msg: object): void {
   if (clientMap.size === 0) return;
   const payload = JSON.stringify(msg);
+  const msgType = (msg as any).type ?? "unknown";
+  wsMessagesBroadcast.inc({ type: msgType });
   for (const [ws] of clientMap) {
     if (ws.readyState === ws.OPEN) ws.send(payload);
   }
@@ -53,7 +56,9 @@ interface TokenMeta {
 }
 
 const TOKEN_META_MAX = 10_000;
+const TOKEN_META_REDIS_KEY = "cache:token-meta"; // Redis HASH: tokenAddr → JSON(TokenMeta)
 const tokenMetaMap = new Map<string, TokenMeta>();
+let   metaWriter: RedisClient | null = null; // set during gateway init
 
 function setTokenMeta(addr: string, meta: TokenMeta): void {
   tokenMetaMap.set(addr, meta);
@@ -61,7 +66,24 @@ function setTokenMeta(addr: string, meta: TokenMeta): void {
     const oldest = tokenMetaMap.keys().next().value!;
     tokenMetaMap.delete(oldest);
   }
+  // Persist to Redis (fire-and-forget — in-memory is primary for hot path)
+  if (metaWriter) {
+    metaWriter.hSet(TOKEN_META_REDIS_KEY, addr, JSON.stringify(meta)).catch(() => {});
+  }
 }
+
+async function restoreTokenMeta(reader: RedisClient): Promise<void> {
+  try {
+    const entries = await reader.hGetAll(TOKEN_META_REDIS_KEY);
+    let count = 0;
+    for (const [addr, raw] of Object.entries(entries)) {
+      tokenMetaMap.set(addr, JSON.parse(raw));
+      count++;
+    }
+    if (count > 0) logger.info({ count }, "Restored token meta from Redis");
+  } catch (err) { logger.warn({ err }, "Could not restore token meta"); }
+}
+
 let   lastMetaLoad = 0;
 
 async function refreshTokenMeta(reader: RedisClient): Promise<void> {
@@ -214,7 +236,7 @@ function onTradeUpdate(token: string, raw: string, reader: RedisClient, pool: Po
     marketCapEth?: string | null; liquidityEth?: string | null; maker?: string | null;
   };
   let data: T;
-  try { data = JSON.parse(raw) as T; } catch { return; }
+  try { data = JSON.parse(raw) as T; } catch (err) { logger.warn({ err, raw: raw?.slice(0, 200) }, "Failed to parse trade update"); errorsTotal.inc({ source: "gateway", type: "json_parse" }); return; }
 
   const addr = token.toLowerCase();
   // Use in-memory meta if available, otherwise fall back to fields embedded in the trade update
@@ -284,7 +306,7 @@ function onTradeUpdate(token: string, raw: string, reader: RedisClient, pool: Po
 
 function onCandleUpdate(channel: string, raw: string): void {
   let data: { tokenAddress?: string; resolution?: string; closeEth?: string; [k: string]: unknown };
-  try { data = JSON.parse(raw) as typeof data; } catch { return; }
+  try { data = JSON.parse(raw) as typeof data; } catch (err) { logger.warn({ err, raw: raw?.slice(0, 200) }, "Failed to parse candle update"); errorsTotal.inc({ source: "gateway", type: "json_parse" }); return; }
 
   // Always broadcast the raw candle tip
   broadcast({ type: "candle", data });
@@ -323,6 +345,10 @@ export interface GatewayOpts {
 
 export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redisUrl, pool }) => {
   const reader = await makeRedisClient(redisUrl);
+  metaWriter = reader; // enable Redis persistence for setTokenMeta
+
+  // Restore tokenMetaMap from Redis (fast — survives pod restart with sparklines intact)
+  await restoreTokenMeta(reader);
 
   // Seed tokenMetaMap from DB
   try {
@@ -343,76 +369,33 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
   lastMetaLoad = 0;
   await refreshTokenMeta(reader);
 
-  // ── Stream readers (all streams use consumer groups) ───────────────────────
+  // ── Pub/Sub subscribers (every pod receives every message) ─────────────────
 
-  const GW_GROUP = "ws-gateway";
-  const GW_CONSUMER = `ws-gw-${process.pid}`;
-
-
-  let gwRunning = true;
   const gwClients: RedisClient[] = [];
 
-  async function readStream(
-    stream: string,
-    handler: (data: string) => void,
-  ): Promise<void> {
-    const client = await makeRedisClient(redisUrl);
-    gwClients.push(client);
-    try {
-      await client.xGroupCreate(stream, GW_GROUP, "0", { MKSTREAM: true });
-    } catch (err: any) {
-      if (!err?.message?.includes("BUSYGROUP")) { /* ok */ }
-    }
-    (async () => {
-      while (gwRunning) {
-        try {
-          const results = await client.xReadGroup(
-            GW_GROUP, GW_CONSUMER,
-            [{ key: stream, id: ">" }],
-            { COUNT: 50, BLOCK: 2000 },
-          );
-          if (!results) continue;
-          for (const { messages } of results) {
-            for (const { id, message } of messages) {
-              try {
-                handler(message.data);
-              } catch (err) {
-                logger.warn({ err, stream, messageId: id }, "Gateway handler error");
-              }
-              await client.xAck(stream, GW_GROUP, id);
-            }
-          }
-        } catch (err) {
-          logger.error({ err, stream }, "Gateway stream read error");
-          if (!gwRunning) break;
-          await new Promise((r) => setTimeout(r, 1000));
-        }
-      }
-    })().catch((err) => logger.error({ err, stream }, "Gateway stream loop crashed"));
-  }
+  // Pub/Sub subscriber for UI channels — fan-out to all gateway pods
+  const subscriber = await makeRedisClient(redisUrl);
+  gwClients.push(subscriber);
 
-  // stream:ui:trades → activity + priceUpdate + tokenList
-  readStream(UI_STREAMS.trades, (raw) => {
+  await subscriber.subscribe(PUBSUB_CHANNELS.trades, (raw) => {
     let data: any;
-    try { data = JSON.parse(raw); } catch { return; }
-    if (data.type !== "trade") return; // skip wallet/fee events sharing this stream
+    try { data = JSON.parse(raw); } catch (err) { logger.warn({ err, channel: "trades", raw: raw?.slice(0, 200) }, "Pub/Sub JSON parse failed"); errorsTotal.inc({ source: "gateway", type: "pubsub_parse" }); return; }
+    if (data.type !== "trade") return;
     const token = (data.tokenAddress || "").toLowerCase();
     if (!token) return;
     onTradeUpdate(token, raw, reader, pool);
   });
 
-  // stream:ui:candles → candle + sparklineUpdate
-  readStream(UI_STREAMS.candles, (raw) => {
+  await subscriber.subscribe(PUBSUB_CHANNELS.candles, (raw) => {
     let data: any;
-    try { data = JSON.parse(raw); } catch { return; }
+    try { data = JSON.parse(raw); } catch (err) { logger.warn({ err, channel: "candles", raw: raw?.slice(0, 200) }, "Pub/Sub JSON parse failed"); errorsTotal.inc({ source: "gateway", type: "pubsub_parse" }); return; }
     const ch = `candles:${data.resolution}:${data.tokenAddress}`;
     onCandleUpdate(ch, raw);
   });
 
-  // stream:ui:fees → coinFeeUpdate + protocolFeeUpdate
-  readStream(UI_STREAMS.fees, (raw) => {
+  await subscriber.subscribe(PUBSUB_CHANNELS.fees, (raw) => {
     let data: any;
-    try { data = JSON.parse(raw); } catch { return; }
+    try { data = JSON.parse(raw); } catch (err) { logger.warn({ err, channel: "fees", raw: raw?.slice(0, 200) }, "Pub/Sub JSON parse failed"); errorsTotal.inc({ source: "gateway", type: "pubsub_parse" }); return; }
     if (data.type === "protocol") {
       broadcast({ type: "protocolFeeUpdate", data });
     } else {
@@ -420,16 +403,14 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
     }
   });
 
-  // stream:ui:rate → refresh USD prices
-  readStream(UI_STREAMS.rate, () => {
+  await subscriber.subscribe(PUBSUB_CHANNELS.rate, () => {
     lastMetaLoad = 0;
-    refreshTokenMeta(reader).then(() => broadcastTokenList(reader, pool)).catch((err: unknown) => logger.debug({ err }, "Background task error"));
+    refreshTokenMeta(reader).then(() => broadcastTokenList(reader, pool)).catch((err: unknown) => logger.warn({ err }, "Rate refresh error"));
   });
 
-  // stream:meta → new_token + tokenList
-  readStream(EVENT_CHANNELS.meta, (raw) => {
+  await subscriber.subscribe(PUBSUB_CHANNELS.meta, (raw) => {
     let payload: any;
-    try { payload = JSON.parse(raw); } catch { return; }
+    try { payload = JSON.parse(raw); } catch (err) { logger.warn({ err, channel: "meta", raw: raw?.slice(0, 200) }, "Pub/Sub JSON parse failed"); errorsTotal.inc({ source: "gateway", type: "pubsub_parse" }); return; }
     if (payload.eventType === "TokenMetaUpdated" && payload.tokenAddress) {
       const addr = payload.tokenAddress.toLowerCase();
       const meta = tokenMetaMap.get(addr) ?? { name: null, symbol: null, totalSupply: null, mcapEth: null, sparkline: [] };
@@ -460,6 +441,7 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
     }
   });
 
+
   logger.info("WS gateway stream readers active");
 
   // Server-side heartbeat: ping every client, drop if no pong within timeout
@@ -483,6 +465,7 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
 
     const tracked: TrackedClient = { ws: socket, alive: true };
     clientMap.set(socket, tracked);
+    wsClientsConnected.set(clientMap.size);
     logger.debug({ total: clientMap.size }, "WS client connected");
 
     // Mark alive on pong
@@ -522,11 +505,13 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
 
     socket.on("close", () => {
       clientMap.delete(socket);
+      wsClientsConnected.set(clientMap.size);
       logger.debug({ total: clientMap.size }, "WS client disconnected");
     });
     socket.on("error", (err) => {
       logger.warn({ err }, "WS client error");
       clientMap.delete(socket);
+      wsClientsConnected.set(clientMap.size);
     });
   });
 };

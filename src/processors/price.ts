@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { EVENT_CHANNELS, UI_STREAMS, STREAM_MAX_LEN, setEthUsdRate } from "../clients/redis";
+import { EVENT_CHANNELS, UI_STREAMS, PUBSUB_CHANNELS, STREAM_MAX_LEN, setEthUsdRate } from "../clients/redis";
 import { BaseProcessor }                                   from "./base-processor";
 import { logger }                                          from "../utils/logger";
 import type { DecodedEvent, ChainlinkAnswerUpdatedEvent }  from "../types/events";
@@ -14,8 +14,11 @@ class PriceProcessor extends BaseProcessor {
 
     // current has 8 decimals — e.g. 300000000000 = $3000.00000000
     await setEthUsdRate(this.publisher, e.current);
-    await this.publisher.xAdd(UI_STREAMS.rate, "*", { data: e.current.toString() },
-      { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAX_LEN } });
+    await Promise.all([
+      this.publisher.xAdd(UI_STREAMS.rate, "*", { data: e.current.toString() },
+        { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAX_LEN } }),
+      this.publisher.publish(PUBSUB_CHANNELS.rate, e.current.toString()),
+    ]);
 
     const usd = Number(e.current) / 1e8;
     logger.info({ rate: `$${usd.toFixed(2)}`, raw: e.current.toString() }, "ETH/USD rate updated");
