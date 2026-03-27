@@ -189,20 +189,27 @@ export const tokenRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       const limit  = Math.min(Number(req.query.limit  ?? 50) || 50, 200);
       const offset = Math.max(Number(req.query.offset ?? 0)  || 0,  0);
 
-      let all: TrendingToken[];
-      const cached = await redis.get(KEYS.apiTokenList());
-      if (cached !== null) {
-        all = JSON.parse(cached) as TrendingToken[];
-      } else {
-        const [rows, ethUsdRate] = await Promise.all([
-          getTokenList(pool),
-          getEthUsdRate(redis),
-        ]);
-        all = rows.map((r) => buildTrendingToken(r, ethUsdRate));
-        await redis.setEx(KEYS.apiTokenList(), 5, JSON.stringify(all));
-      }
+      // Cache pre-sorted lists by sort option — avoids O(n log n) sort on every request
+      const cacheKey = `${KEYS.apiTokenList()}:${sort}`;
+      const data = await withCache(redis, cacheKey, 5, async () => {
+        // Fetch once, build all sort variants (shared DB query, different sort orders)
+        const allKey = `${KEYS.apiTokenList()}:all`;
+        let all: TrendingToken[];
+        const cachedAll = await redis.get(allKey);
+        if (cachedAll) {
+          all = JSON.parse(cachedAll);
+        } else {
+          const [rows, ethUsdRate] = await Promise.all([
+            getTokenList(pool),
+            getEthUsdRate(redis),
+          ]);
+          all = rows.map((r) => buildTrendingToken(r, ethUsdRate));
+          await redis.setEx(allKey, 5, JSON.stringify(all));
+        }
+        return sortTokens(all, sort);
+      });
 
-      return reply.send(sortTokens(all, sort).slice(offset, offset + limit));
+      return reply.send(data.slice(offset, offset + limit));
     },
   );
 
@@ -332,22 +339,24 @@ export const tokenRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   // ── PATCH /tokens/:address/metadata ──────────────────────────────────────────
   app.patch<{
     Params: { address: string };
-    Body:   { creator: string; description?: string; website?: string; twitter?: string; telegram?: string };
+    Body:   { description?: string; website?: string; twitter?: string; telegram?: string };
   }>(
     "/:address/metadata",
     async (req, reply) => {
       const address = req.params.address.toLowerCase();
-      const { creator, description, website, twitter, telegram } = req.body ?? {};
+      const { description, website, twitter, telegram } = req.body ?? {};
 
-      if (!creator) return reply.status(400).send({ error: "creator address required" });
+      // Wallet is set by jwtAuthHook from the verified JWT — never trust request body
+      const wallet = (req as any).wallet;
+      if (!wallet) return reply.status(401).send({ error: "Authentication required" });
 
-      // Verify the caller is the token's creator
+      // Verify the authenticated wallet is the token's creator
       const row = await pool.query<{ creator: string }>(
         "SELECT creator FROM token_registry WHERE token_address = $1 LIMIT 1",
         [address],
       );
       if (!row.rows.length) return reply.status(404).send({ error: "Token not found" });
-      if (row.rows[0].creator.toLowerCase() !== creator.toLowerCase()) {
+      if (row.rows[0].creator.toLowerCase() !== wallet.toLowerCase()) {
         return reply.status(403).send({ error: "Only the token creator can update metadata" });
       }
 

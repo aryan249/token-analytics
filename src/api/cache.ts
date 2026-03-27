@@ -1,8 +1,14 @@
 import type { RedisClient } from "../clients/redis";
+import { cacheHits, cacheMisses } from "../utils/metrics";
 
-const LOCK_TTL = 5; // seconds
+const LOCK_TTL = 30; // seconds — must exceed worst-case query time
 const LOCK_RETRY_DELAY = 50; // ms
 const LOCK_MAX_RETRIES = 100; // 50ms * 100 = 5s max wait
+
+function keyPattern(key: string): string {
+  // Normalize cache keys to patterns for metrics: "api:tokens:list:marketCap" → "api:tokens:list"
+  return key.replace(/:[0-9a-f]{40}/gi, ":*").replace(/:\d+$/, ":*").split(":").slice(0, 3).join(":");
+}
 
 /**
  * Cache-aside with stampede lock.
@@ -22,7 +28,8 @@ export async function withCache<T>(
 ): Promise<T> {
   // 1. Check cache
   const cached = await redis.get(key);
-  if (cached !== null) return JSON.parse(cached) as T;
+  if (cached !== null) { cacheHits.inc({ pattern: keyPattern(key) }); return JSON.parse(cached) as T; }
+  cacheMisses.inc({ pattern: keyPattern(key) });
 
   // 2. Try to acquire lock
   const lockKey = `lock:${key}`;
