@@ -150,7 +150,8 @@ export async function getTokenList(pool: Pool): Promise<TokenListRow[]> {
     total_supply: string | null; discovered_at: string;
     description: string | null; website: string | null;
     twitter: string | null; telegram: string | null;
-    last_price_eth: string | null; vol_24h_eth: string; trade_count_24h: number;
+    last_price_eth: string | null; mcap_eth: string | null;
+    vol_24h_eth: string; trade_count_24h: number;
     holder_count: string;
     sparkline: string[] | null;
     fees_earned_eth: string;
@@ -158,7 +159,86 @@ export async function getTokenList(pool: Pool): Promise<TokenListRow[]> {
     hour_data: HourDataPoint[] | null;
     royalty_members: Array<{ recipient: string; share: string }> | null;
   }>(
-    `SELECT
+    `WITH
+     -- Latest 1m candle price per token (single scan of candles, not per-row)
+     latest_price AS (
+       SELECT DISTINCT ON (token_address)
+         token_address, close_eth
+       FROM candles
+       WHERE resolution = '1m'
+       ORDER BY token_address, bucket_time DESC
+     ),
+     -- Pool state fallback price
+     pool_price AS (
+       SELECT DISTINCT ON (token_address)
+         token_address,
+         CASE WHEN sqrt_price_x96 > 0
+           THEN FLOOR((2^192)::numeric / (sqrt_price_x96 * sqrt_price_x96) * 1e18)
+           ELSE NULL END AS derived_price
+       FROM pool_state
+       ORDER BY token_address
+     ),
+     -- 24h volume + trade count from 1h candles (single grouped scan)
+     stats_24h AS (
+       SELECT token_address,
+         COALESCE(SUM(volume_eth), 0)::text AS vol_24h_eth,
+         COALESCE(SUM(trade_count), 0)::int AS trade_count_24h
+       FROM candles
+       WHERE resolution = '1h' AND bucket_time >= $1
+       GROUP BY token_address
+     ),
+     -- Holder counts (single grouped scan)
+     holders AS (
+       SELECT hb.token_address, COUNT(*)::int AS holder_count
+       FROM holder_balances hb
+       JOIN token_registry tr ON tr.token_address = hb.token_address
+       WHERE hb.balance > 0 AND hb.wallet != tr.pm_address
+       GROUP BY hb.token_address
+     ),
+     -- Lifetime fees per token (single grouped scan)
+     fees AS (
+       SELECT token_address, SUM(creator_amount)::text AS fees_earned_eth
+       FROM fee_distributions
+       GROUP BY token_address
+     ),
+     -- 24h open price (first 1h candle in window)
+     open_24h AS (
+       SELECT DISTINCT ON (token_address)
+         token_address, open_eth
+       FROM candles
+       WHERE resolution = '1h' AND bucket_time >= $1
+       ORDER BY token_address, bucket_time ASC
+     ),
+     -- Sparkline + hour data: last 24 1h candles per token
+     hourly AS (
+       SELECT token_address, bucket_time, open_eth, close_eth, volume_eth,
+         ROW_NUMBER() OVER (PARTITION BY token_address ORDER BY bucket_time DESC) AS rn
+       FROM candles
+       WHERE resolution = '1h'
+     ),
+     hour_agg AS (
+       SELECT token_address,
+         array_agg(close_eth::text ORDER BY bucket_time ASC) AS sparkline,
+         json_agg(
+           json_build_object(
+             'periodStartUnix', bucket_time::text,
+             'volumeEth',       volume_eth::text,
+             'openPriceEth',    open_eth::text,
+             'closePriceEth',   close_eth::text
+           ) ORDER BY bucket_time ASC
+         ) AS hour_data
+       FROM hourly
+       WHERE rn <= 24
+       GROUP BY token_address
+     ),
+     -- Royalty members per token
+     royalties AS (
+       SELECT token_address,
+         json_agg(json_build_object('recipient', recipient, 'share', share::text)) AS royalty_members
+       FROM royalty_members
+       GROUP BY token_address
+     )
+     SELECT
        tr.token_address,
        tr.pool_id,
        tr.creator,
@@ -171,82 +251,28 @@ export async function getTokenList(pool: Pool): Promise<TokenListRow[]> {
        tr.twitter,
        tr.telegram,
        tr.discovered_at,
-       COALESCE(
-         (SELECT close_eth::text
-          FROM candles
-          WHERE token_address = tr.token_address AND resolution = '1m'
-          ORDER BY bucket_time DESC LIMIT 1),
-         -- Fallback: derive price from pool_state sqrtPriceX96
-         -- price_eth (wei) = 2^192 / sqrtPriceX96^2 * 1e18
-         (SELECT CASE WHEN ps.sqrt_price_x96 > 0
-           THEN FLOOR((2^192)::numeric / (ps.sqrt_price_x96 * ps.sqrt_price_x96) * 1e18)::text
-           ELSE NULL END
-          FROM pool_state ps WHERE ps.token_address = tr.token_address LIMIT 1),
-         -- Fallback: initial price from token registry (set by first PoolStateUpdated)
-         tr.initial_price_eth::text
-       ) AS last_price_eth,
-       COALESCE((
-         SELECT SUM(volume_eth)::text
-         FROM candles
-         WHERE token_address = tr.token_address
-           AND resolution = '1h'
-           AND bucket_time >= $1
-       ), '0') AS vol_24h_eth,
-       COALESCE((
-         SELECT SUM(trade_count)
-         FROM candles
-         WHERE token_address = tr.token_address
-           AND resolution = '1h'
-           AND bucket_time >= $1
-       ), 0)::int AS trade_count_24h,
-       COALESCE((
-         SELECT COUNT(*)
-         FROM holder_balances
-         WHERE token_address = tr.token_address AND balance > 0
-           AND wallet != tr.pm_address
-       ), 0)::int AS holder_count,
-       COALESCE((
-         SELECT array_agg(close_eth::text ORDER BY bucket_time ASC)
-         FROM (
-           SELECT close_eth, bucket_time FROM candles
-           WHERE token_address = tr.token_address AND resolution = '1h'
-           ORDER BY bucket_time DESC LIMIT 24
-         ) s
-       ), '{}') AS sparkline,
-       COALESCE((
-         SELECT SUM(creator_amount)::text
-         FROM fee_distributions
-         WHERE token_address = tr.token_address
-       ), '0') AS fees_earned_eth,
-       COALESCE(
-         (SELECT open_eth::text
-          FROM candles
-          WHERE token_address = tr.token_address
-            AND resolution = '1h'
-            AND bucket_time >= $1
-          ORDER BY bucket_time ASC LIMIT 1),
-         tr.initial_price_eth::text
-       ) AS price_24h_open_eth,
-       (SELECT json_agg(
-          json_build_object(
-            'periodStartUnix', h.bucket_time::text,
-            'volumeEth',       h.volume_eth::text,
-            'openPriceEth',    h.open_eth::text,
-            'closePriceEth',   h.close_eth::text
-          ) ORDER BY h.bucket_time ASC
-        )
-        FROM (
-          SELECT bucket_time, volume_eth, open_eth, close_eth
-          FROM candles
-          WHERE token_address = tr.token_address AND resolution = '1h'
-          ORDER BY bucket_time DESC LIMIT 24
-        ) h
-       ) AS hour_data,
-       (SELECT json_agg(json_build_object('recipient', rm.recipient, 'share', rm.share::text))
-        FROM royalty_members rm
-        WHERE rm.token_address = tr.token_address
-       ) AS royalty_members
+       COALESCE(lp.close_eth::text, pp.derived_price::text, tr.initial_price_eth::text) AS last_price_eth,
+       -- Pre-compute mcap in SQL to avoid per-token BigInt math in application code
+       CASE WHEN tr.total_supply IS NOT NULL AND COALESCE(lp.close_eth, pp.derived_price, tr.initial_price_eth) IS NOT NULL
+         THEN (COALESCE(lp.close_eth, pp.derived_price, tr.initial_price_eth) * tr.total_supply / 1e18)::text
+         ELSE NULL END AS mcap_eth,
+       COALESCE(s.vol_24h_eth, '0')       AS vol_24h_eth,
+       COALESCE(s.trade_count_24h, 0)     AS trade_count_24h,
+       COALESCE(h.holder_count, 0)        AS holder_count,
+       COALESCE(ha.sparkline, '{}')       AS sparkline,
+       COALESCE(f.fees_earned_eth, '0')   AS fees_earned_eth,
+       COALESCE(o.open_eth::text, tr.initial_price_eth::text) AS price_24h_open_eth,
+       ha.hour_data,
+       r.royalty_members
      FROM token_registry tr
+     LEFT JOIN latest_price lp ON lp.token_address = tr.token_address
+     LEFT JOIN pool_price   pp ON pp.token_address = tr.token_address
+     LEFT JOIN stats_24h     s ON s.token_address  = tr.token_address
+     LEFT JOIN holders       h ON h.token_address  = tr.token_address
+     LEFT JOIN fees          f ON f.token_address   = tr.token_address
+     LEFT JOIN open_24h      o ON o.token_address  = tr.token_address
+     LEFT JOIN hour_agg     ha ON ha.token_address = tr.token_address
+     LEFT JOIN royalties     r ON r.token_address  = tr.token_address
      ORDER BY tr.discovered_at DESC`,
     [since24h]
   );
@@ -267,9 +293,7 @@ export async function getTokenList(pool: Pool): Promise<TokenListRow[]> {
     vol24hEth:       r.vol_24h_eth,
     tradeCount24h:   r.trade_count_24h,
     holderCount:     Number(r.holder_count),
-    mcapEth:         r.last_price_eth != null && r.total_supply != null
-      ? (BigInt(r.last_price_eth) * BigInt(r.total_supply) / (10n ** 18n)).toString()
-      : null,
+    mcapEth:         r.mcap_eth,
     sparkline:       r.sparkline ?? [],
     feesEarnedEth:   r.fees_earned_eth,
     price24hOpenEth: r.price_24h_open_eth,
