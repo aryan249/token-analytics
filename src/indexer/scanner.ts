@@ -14,12 +14,14 @@ import {
   import { WATCHED_TOPICS }                              from "../abis/abis";
   import { readCheckpoint, writeCheckpoint, insertBlockHeader } from "../utils/db/checkpoint";
   import { getAllTokenAddresses, getAllPoolMappings } from "../utils/db/tokens";
-  import { EVENT_CHANNELS, STREAM_MAX_LEN } from "../clients/redis";
+  import { EVENT_CHANNELS, UI_STREAMS, PUBSUB_CHANNELS, STREAM_MAX_LEN } from "../clients/redis";
   import { detectAndRecover } from "./reorg";
   import { decodeLog }        from "../utils/decoder";
   import type { RawLog, BlockHeader, DecodedEvent, ManagerDeployedEvent, PoolCreatedEvent } from "../types/events";
   import { config }           from "../config/config";
   import { logger }           from "../utils/logger";
+  import { getBucketTime, ALL_RESOLUTIONS } from "../utils/math";
+  import type { PoolSwapEvent, CandleResolution } from "../types/events";
 
   // Parsed ABI event used for topic-only getLogs (no address filter)
   const MANAGER_INITIALIZED_FEE_SPLIT_EVENT = parseAbiItem(
@@ -54,10 +56,9 @@ import {
     private readonly client;     // WS — used only for watchBlocks
     private readonly httpClient; // HTTP — used for getLogs (WS silently breaks on address arrays)
     private readonly pool:  Pool;
-    private readonly redis: RedisClient;
+    private readonly redisClients: RedisClient[];
 
     private pendingBlocks:     Map<bigint, PendingBlock> = new Map();
-    private latestBlock:       bigint = 0n;
     private knownTokens:       Set<string> = new Set();
     private poolIdToToken:     Map<string, string> = new Map();
     private dynamicManagers:   Set<string> = new Set();
@@ -66,7 +67,7 @@ import {
 
     private unsubscribe: (() => void) | null = null;
 
-    constructor(pool: Pool, redis: RedisClient) {
+    constructor(pool: Pool, redisClients: RedisClient[]) {
       const httpUrl = config.alchemyWsUrl.replace(/^wss?:\/\//, "https://");
       this.client = createPublicClient({
         chain:     base,
@@ -78,17 +79,20 @@ import {
       });
       this.httpClient = createPublicClient({ chain: base, transport: http(httpUrl) });
       this.pool  = pool;
-      this.redis = redis;
+      this.redisClients = redisClients;
     }
 
     async start(): Promise<void> {
       await this.refreshKnownState();
 
+      // Verify recent blocks are in Redis — replay any gaps from Redis crash
+      await this.verifyAndReplayGaps();
+
       const startBlock  = await this.resolveStartBlock();
       const currentHead = await this.client.getBlockNumber();
 
       if (startBlock < currentHead) {
-        await this.catchUp(startBlock, currentHead - BigInt(config.confirmationDepth));
+        await this.catchUp(startBlock, currentHead);
       }
 
       logger.info({ startBlock: startBlock.toString() }, "Subscribing to newHeads");
@@ -116,7 +120,6 @@ import {
     // ── New head ──────────────────────────────────────────────────────────────
 
     private async onNewHead(block: PendingBlock): Promise<void> {
-      this.latestBlock = block.number;
       this.pendingBlocks.set(block.number, block);
 
       // Cap pending blocks to prevent memory leak on deep reorgs
@@ -126,7 +129,7 @@ import {
         logger.warn({ dropped: oldest.toString(), size: this.pendingBlocks.size }, "Dropped old pending block");
       }
 
-      await this.drainConfirmedBlocks();
+      await this.drainPendingBlocks();
 
       this.blocksSinceRefresh++;
       if (this.blocksSinceRefresh >= this.REFRESH_INTERVAL) {
@@ -135,20 +138,18 @@ import {
       }
     }
 
-    // ── Drain confirmed blocks ────────────────────────────────────────────────
+    // ── Drain pending blocks (process immediately — reorgs handled by detectAndRecover)
 
-    private async drainConfirmedBlocks(): Promise<void> {
-      const depth = BigInt(config.confirmationDepth);
-      const confirmed = [...this.pendingBlocks.entries()]
-        .filter(([n]) => this.latestBlock - n >= depth)
+    private async drainPendingBlocks(): Promise<void> {
+      const ready = [...this.pendingBlocks.entries()]
         .sort(([a], [b]) => (a < b ? -1 : 1));
 
-      for (const [, block] of confirmed) {
+      for (const [, block] of ready) {
         try {
           await this.processConfirmedBlock(block);
           this.pendingBlocks.delete(block.number);
         } catch (err) {
-          logger.error({ err, block: block.number.toString() }, "Error processing confirmed block");
+          logger.error({ err, block: block.number.toString() }, "Error processing block");
         }
       }
     }
@@ -192,7 +193,10 @@ import {
       }
 
       const decoded   = this.decodeLogs(logs);
-      await this.publishToChannels(decoded);
+      const publishedIds = await this.publishToChannels(decoded);
+
+      // Record what was published for gap detection on restart
+      await this.recordPublishLedger(block.number, publishedIds);
 
       await insertBlockHeader(this.pool, header, config.chainId);
       await writeCheckpoint(this.pool, config.chainId, block.number, block.hash);
@@ -248,14 +252,74 @@ import {
       }
     }
 
-    private async publishToChannels(events: DecodedEvent[]): Promise<void> {
+    /** Publish events to Redis streams + Pub/Sub. Returns stream IDs per stream (from primary Redis). */
+    private async publishToChannels(events: DecodedEvent[]): Promise<Map<string, string[]>> {
+      const streamCmds: { stream: string; data: string }[] = [];
+      const pubsubCmds: { channel: string; data: string }[] = [];
+
       for (const event of events) {
         const stream = this.routeToChannel(event);
         if (!stream) continue;
-        await this.redis.xAdd(stream, "*", {
-          data: JSON.stringify(event, bigIntReplacer),
-        }, { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAX_LEN } });
+        streamCmds.push({ stream, data: JSON.stringify(event, bigIntReplacer) });
+
+        // Fast-path: publish candle tips directly for PoolSwap events.
+        if (event.eventType === "PoolSwap") {
+          const e = event as PoolSwapEvent;
+          if (e.tokenAddress && e.priceEth !== 0n) {
+            for (const resolution of ALL_RESOLUTIONS) {
+              const bucketTime = getBucketTime(e.blockTimestamp, resolution as CandleResolution);
+              const data = JSON.stringify({
+                type:         "candle",
+                tokenAddress: e.tokenAddress,
+                resolution,
+                bucketTime:   bucketTime.toString(),
+                closeEth:     e.priceEth.toString(),
+                volumeEth:    e.volumeEth.toString(),
+              });
+              streamCmds.push({ stream: UI_STREAMS.candles, data });
+              pubsubCmds.push({ channel: PUBSUB_CHANNELS.candles, data });
+            }
+          }
+        }
+
+        // Fan-out meta events (PoolCreated, etc.) so all gateway pods see new tokens
+        if (stream === EVENT_CHANNELS.meta) {
+          pubsubCmds.push({ channel: PUBSUB_CHANNELS.meta, data: JSON.stringify(event, bigIntReplacer) });
+        }
       }
+
+      const idsByStream = new Map<string, string[]>();
+      if (streamCmds.length === 0) return idsByStream;
+
+      // Pipeline all xAdds + publishes into one round trip per Redis instance
+      const trimOpts = { TRIM: { strategy: "MAXLEN" as const, strategyModifier: "~" as const, threshold: STREAM_MAX_LEN } };
+      const results = await Promise.all(
+        this.redisClients.map(redis => {
+          const pipeline = redis.multi();
+          for (const cmd of streamCmds) {
+            pipeline.xAdd(cmd.stream, "*", { data: cmd.data }, trimOpts);
+          }
+          for (const cmd of pubsubCmds) {
+            pipeline.publish(cmd.channel, cmd.data);
+          }
+          return pipeline.exec();
+        })
+      );
+
+      // Extract stream IDs from primary Redis (first client) response
+      if (results[0]) {
+        const primaryResults = results[0] as unknown[];
+        for (let i = 0; i < streamCmds.length; i++) {
+          const streamId = primaryResults[i] as string | null;
+          if (streamId) {
+            const ids = idsByStream.get(streamCmds[i].stream) ?? [];
+            ids.push(streamId);
+            idsByStream.set(streamCmds[i].stream, ids);
+          }
+        }
+      }
+
+      return idsByStream;
     }
 
     private routeToChannel(event: DecodedEvent): string | null {
@@ -288,15 +352,22 @@ import {
       logger.info({ from: fromBlock.toString(), to: toBlock.toString() }, "Catching up");
       const BATCH = BigInt(config.batchSize);
 
+      // Max concurrent RPC requests for block headers during catch-up
+      const HEADER_CONCURRENCY = 10;
+
       for (let start = fromBlock; start <= toBlock; start += BATCH) {
         const end = start + BATCH - 1n < toBlock ? start + BATCH - 1n : toBlock;
 
-        // Fetch block headers and build a block→timestamp map for accurate candle buckets
+        // Fetch block headers in parallel (capped concurrency to avoid rate limits)
         const timestampMap = new Map<bigint, bigint>();
-        for (let n = start; n <= end; n++) {
-          const h = await this.fetchBlockHeader(n);
-          await insertBlockHeader(this.pool, h, config.chainId);
-          timestampMap.set(h.blockNumber, h.blockTimestamp);
+        const blockNumbers: bigint[] = [];
+        for (let n = start; n <= end; n++) blockNumbers.push(n);
+
+        for (let i = 0; i < blockNumbers.length; i += HEADER_CONCURRENCY) {
+          const chunk = blockNumbers.slice(i, i + HEADER_CONCURRENCY);
+          const headers = await Promise.all(chunk.map(n => this.fetchBlockHeader(n)));
+          await Promise.all(headers.map(h => insertBlockHeader(this.pool, h, config.chainId)));
+          for (const h of headers) timestampMap.set(h.blockNumber, h.blockTimestamp);
         }
 
         const tokensBefore = new Set(this.knownTokens);
@@ -324,7 +395,8 @@ import {
 
         // Second pass: re-decode with updated mappings (fixes null tokenAddress on same-batch swaps)
         const decoded = this.decodeLogs(allLogs);
-        await this.publishToChannels(decoded);
+        const publishedIds = await this.publishToChannels(decoded);
+        await this.recordPublishLedger(end, publishedIds);
         await writeCheckpoint(this.pool, config.chainId, end, "0x" as Hash);
 
         logger.info({ from: start.toString(), to: end.toString() }, "Catch-up batch done");
@@ -412,6 +484,87 @@ import {
       return allLogs
         .map((l) => toRawLog(l, timestampMap.get(l.blockNumber!) ?? 0n))
         .filter((l) => l.topics.length > 0 && WATCHED_TOPICS.has(l.topics[0] as `0x${string}`));
+    }
+
+    // ── Publish ledger + gap verification ──────────────────────────────────
+
+    /** Record which stream IDs were published for a block — used for gap detection. */
+    private async recordPublishLedger(blockNumber: bigint, idsByStream: Map<string, string[]>): Promise<void> {
+      for (const [stream, ids] of idsByStream) {
+        await this.pool.query(
+          `INSERT INTO publish_ledger (block_number, stream, event_count, stream_ids)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (block_number, stream) DO UPDATE SET
+             event_count = $3, stream_ids = $4, published_at = NOW()`,
+          [blockNumber.toString(), stream, ids.length, ids],
+        );
+      }
+    }
+
+    /**
+     * On startup, verify that the last REPLAY_DEPTH blocks' events still exist in Redis.
+     * If any are missing (Redis crashed), re-fetch and re-publish those blocks.
+     * Safe because all processor writes are idempotent (ON CONFLICT).
+     */
+    private async verifyAndReplayGaps(): Promise<void> {
+      const REPLAY_DEPTH = 100; // check last 100 blocks
+      const cp = await readCheckpoint(this.pool, config.chainId);
+      if (!cp || cp.lastFinalizedBlock <= 0n) return;
+
+      const fromBlock = cp.lastFinalizedBlock - BigInt(REPLAY_DEPTH);
+      if (fromBlock <= 0n) return;
+
+      // Get ledger entries for recent blocks
+      const ledger = await this.pool.query<{
+        block_number: string; stream: string; event_count: number; stream_ids: string[];
+      }>(
+        `SELECT block_number, stream, event_count, stream_ids
+         FROM publish_ledger WHERE block_number > $1
+         ORDER BY block_number ASC`,
+        [fromBlock.toString()],
+      );
+
+      if (ledger.rows.length === 0) return;
+
+      // Check if the stream IDs still exist in Redis (spot-check first and last per stream)
+      const primaryRedis = this.redisClients[0];
+      const missingBlocks = new Set<bigint>();
+
+      for (const row of ledger.rows) {
+        if (row.stream_ids.length === 0) continue;
+        // Spot-check: verify the last stream ID for this block+stream exists
+        const lastId = row.stream_ids[row.stream_ids.length - 1];
+        try {
+          const found = await primaryRedis.xRange(row.stream, lastId, lastId);
+          if (found.length === 0) {
+            missingBlocks.add(BigInt(row.block_number));
+          }
+        } catch {
+          // Stream might not exist at all — block is definitely missing
+          missingBlocks.add(BigInt(row.block_number));
+        }
+      }
+
+      if (missingBlocks.size === 0) {
+        logger.info({ checked: ledger.rows.length }, "Publish ledger verified — no gaps");
+        return;
+      }
+
+      logger.warn({ missingBlocks: missingBlocks.size }, "Detected missing events in Redis — replaying");
+
+      // Re-fetch and re-publish missing blocks
+      for (const blockNum of [...missingBlocks].sort((a, b) => (a < b ? -1 : 1))) {
+        try {
+          const header = await this.fetchBlockHeader(blockNum);
+          const logs = await this.fetchLogsForBlock(blockNum, header.blockTimestamp);
+          const decoded = this.decodeLogs(logs);
+          const ids = await this.publishToChannels(decoded);
+          await this.recordPublishLedger(blockNum, ids);
+          logger.info({ block: blockNum.toString(), events: decoded.length }, "Replayed missing block");
+        } catch (err) {
+          logger.error({ err, block: blockNum.toString() }, "Failed to replay block — will retry next startup");
+        }
+      }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
