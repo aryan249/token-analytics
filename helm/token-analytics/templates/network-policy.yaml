@@ -1,0 +1,32 @@
+# Only API pods can receive external ingress traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: {{ .Values.api.port }}
+          protocol: TCP
+---
+# Deny all ingress to processors and indexer (they only make outbound connections)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-processor-ingress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: NotIn
+        values: [api]
+  policyTypes:
+    - Ingress
+  ingress: []

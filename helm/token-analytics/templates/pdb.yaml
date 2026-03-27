@@ -1,0 +1,47 @@
+# API — always keep at least 1 pod available during disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api-pdb
+  namespace: {{ .Values.namespace }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: api
+---
+# Indexer — never evict the single indexer pod voluntarily
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: indexer-pdb
+  namespace: {{ .Values.namespace }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: indexer
+---
+# Trade processor — keep at least 1 running during disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: processor-trade-pdb
+  namespace: {{ .Values.namespace }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: processor-trade
+---
+# Candle processor — keep at least 1 running during disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: processor-candle-pdb
+  namespace: {{ .Values.namespace }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: processor-candle

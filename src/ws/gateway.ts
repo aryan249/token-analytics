@@ -11,31 +11,17 @@
 //   tokenList         — full token list sorted by mcap (debounced 2s)
 //   new_token         — new token launched
 
-import { createClient }           from "redis";
 import type { FastifyPluginAsync } from "fastify";
 import type { WebSocket as WS }    from "@fastify/websocket";
 import type { Pool }               from "pg";
 import type { RedisClient }        from "../clients/redis";
-import { KEYS, getEthUsdRate, EVENT_CHANNELS, makeRedisClient } from "../clients/redis";
-import { verifyJwt }              from "../api/auth";
+import { KEYS, getEthUsdRate, EVENT_CHANNELS, UI_STREAMS, makeRedisClient } from "../clients/redis";
+import { WAD } from "../utils/constants";
 import { getTokenList }            from "../utils/db/tokens";
-import { ethPriceToUsd, formatUsd } from "../utils/math";
+import { ethPriceToUsd, formatUsd, weiToEth } from "../utils/math";
 import { logger }                  from "../utils/logger";
 
-const WAD = 10n ** 18n;
 
-/** Convert a raw wei bigint string to a human-readable ETH decimal string. */
-function weiToEth(wei: string | null | undefined): string | null {
-  if (wei == null) return null;
-  try {
-    const n = BigInt(wei);
-    if (n === 0n) return "0";
-    const whole = n / WAD;
-    const frac  = n % WAD;
-    if (frac === 0n) return whole.toString();
-    return `${whole}.${frac.toString().padStart(18, "0").replace(/0+$/, "")}`;
-  } catch { return null; }
-}
 
 // ── Connected clients with heartbeat ─────────────────────────────────────────
 
@@ -56,7 +42,6 @@ function broadcast(msg: object): void {
   }
 }
 
-
 // ── Token metadata cache ──────────────────────────────────────────────────────
 
 interface TokenMeta {
@@ -67,7 +52,16 @@ interface TokenMeta {
   sparkline:   string[];          // last 24 × 1h closeEth values
 }
 
+const TOKEN_META_MAX = 10_000;
 const tokenMetaMap = new Map<string, TokenMeta>();
+
+function setTokenMeta(addr: string, meta: TokenMeta): void {
+  tokenMetaMap.set(addr, meta);
+  if (tokenMetaMap.size > TOKEN_META_MAX) {
+    const oldest = tokenMetaMap.keys().next().value!;
+    tokenMetaMap.delete(oldest);
+  }
+}
 let   lastMetaLoad = 0;
 
 async function refreshTokenMeta(reader: RedisClient): Promise<void> {
@@ -82,7 +76,7 @@ async function refreshTokenMeta(reader: RedisClient): Promise<void> {
     for (const t of list) {
       const addr = t.tokenAddress.toLowerCase();
       const existing = tokenMetaMap.get(addr);
-      tokenMetaMap.set(addr, {
+      setTokenMeta(addr, {
         name:        t.name,
         symbol:      t.symbol,
         totalSupply: t.totalSupply,
@@ -93,7 +87,7 @@ async function refreshTokenMeta(reader: RedisClient): Promise<void> {
     }
     lastMetaLoad = Date.now();
     logger.debug({ count: tokenMetaMap.size }, "Token meta refreshed");
-  } catch { /* non-fatal */ }
+  } catch (err) { logger.debug({ err }, "Non-fatal error"); }
 }
 
 // ── Full token list builder (mirrors REST API format) ────────────────────────
@@ -122,7 +116,7 @@ async function buildAndCacheTokenList(pool: Pool, writer: RedisClient): Promise<
         const cur = Number(BigInt(priceWei));
         const opn = Number(BigInt(r.price24hOpenEth));
         if (opn > 0) change24h = (cur - opn) / opn * 100;
-      } catch { /* ignore */ }
+      } catch (err) { logger.debug({ err }, "Ignored error"); }
     }
 
     const totalShares = r.royaltyMembers.reduce((s, m) => s + BigInt(m.share), 0n);
@@ -206,7 +200,7 @@ async function broadcastTokenList(reader: RedisClient, pool: Pool): Promise<void
       }
     }
     broadcast({ type: "tokenList", data: sortByMcap(list) });
-  } catch { /* non-fatal */ }
+  } catch (err) { logger.debug({ err }, "Non-fatal error"); }
 }
 
 // ── Trade → activity + priceUpdate + tokenList ───────────────────────────────
@@ -227,7 +221,7 @@ function onTradeUpdate(token: string, raw: string, reader: RedisClient, pool: Po
   let meta = tokenMetaMap.get(addr);
   if (!meta) {
     meta = { name: data.name ?? null, symbol: data.symbol ?? null, totalSupply: data.totalSupply ?? null, mcapEth: null, sparkline: [] };
-    tokenMetaMap.set(addr, meta);
+    setTokenMeta(addr, meta);
   } else {
     if (!meta.name   && data.name)        meta.name        = data.name;
     if (!meta.symbol && data.symbol)      meta.symbol      = data.symbol;
@@ -260,12 +254,12 @@ function onTradeUpdate(token: string, raw: string, reader: RedisClient, pool: Po
   if (!mcapEthWei && meta?.totalSupply && data.priceEth) {
     try {
       mcapEthWei = (BigInt(data.priceEth) * BigInt(meta.totalSupply) / WAD).toString();
-    } catch { /* ignore */ }
+    } catch (err) { logger.debug({ err }, "Ignored error"); }
   }
   if (mcapEthWei && data.priceUsd != null && meta?.totalSupply) {
     try {
       marketCapUSD = formatUsd(data.priceUsd * Number(BigInt(meta.totalSupply)) / Number(WAD));
-    } catch { /* ignore */ }
+    } catch (err) { logger.debug({ err }, "Ignored error"); }
   }
   const marketCapETH = weiToEth(mcapEthWei);
   if (meta && marketCapETH) meta.mcapEth = marketCapETH;
@@ -283,7 +277,7 @@ function onTradeUpdate(token: string, raw: string, reader: RedisClient, pool: Po
     },
   });
 
-  refreshTokenMeta(reader).then(() => broadcastTokenList(reader, pool)).catch(() => {});
+  refreshTokenMeta(reader).then(() => broadcastTokenList(reader, pool)).catch((err: unknown) => logger.debug({ err }, "Background task error"));
 }
 
 // ── Candle → candle event + sparklineUpdate (1h only) ────────────────────────
@@ -306,7 +300,7 @@ function onCandleUpdate(channel: string, raw: string): void {
   let meta = tokenMetaMap.get(addr);
   if (!meta) {
     meta = { name: null, symbol: null, totalSupply: null, mcapEth: null, sparkline: [] };
-    tokenMetaMap.set(addr, meta);
+    setTokenMeta(addr, meta);
   }
 
   // Append new close (converted to decimal ETH) and keep last 24 values
@@ -328,25 +322,17 @@ export interface GatewayOpts {
 }
 
 export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redisUrl, pool }) => {
-  const sub    = createClient({ url: redisUrl });
-  const reader = createClient({ url: redisUrl }) as unknown as RedisClient;
+  const reader = await makeRedisClient(redisUrl);
 
-  sub.on("error",    (err) => logger.error({ err }, "WS Redis sub error"));
-  reader.on("error", (err) => logger.error({ err }, "WS Redis reader error"));
-  await sub.connect();
-  await reader.connect();
-
-  // Seed tokenMetaMap from DB so the first tokenList broadcast has real data
+  // Seed tokenMetaMap from DB
   try {
     const rows = await getTokenList(pool);
     for (const r of rows) {
       const addr = r.tokenAddress.toLowerCase();
-      tokenMetaMap.set(addr, {
-        name:        r.name,
-        symbol:      r.symbol,
-        totalSupply: r.totalSupply,
-        mcapEth:     weiToEth(r.mcapEth),
-        sparkline:   (r.sparkline ?? []).map((s) => weiToEth(s) ?? s),
+      setTokenMeta(addr, {
+        name: r.name, symbol: r.symbol, totalSupply: r.totalSupply,
+        mcapEth: weiToEth(r.mcapEth),
+        sparkline: (r.sparkline ?? []).map((s) => weiToEth(s) ?? s),
       });
     }
     logger.info({ count: tokenMetaMap.size }, "Token meta seeded from DB");
@@ -357,102 +343,124 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
   lastMetaLoad = 0;
   await refreshTokenMeta(reader);
 
-  // updates:{token} → activity + priceUpdate + tokenList
-  await sub.pSubscribe("updates:*", (msg, ch) => {
-    onTradeUpdate(ch.replace(/^updates:/, ""), msg, reader, pool);
-  });
+  // ── Stream readers (all streams use consumer groups) ───────────────────────
 
-  // candles:{res}:{token} → candle + sparklineUpdate (1h only)
-  await sub.pSubscribe("candles:*", (msg, ch) => onCandleUpdate(ch, msg));
+  const GW_GROUP = "ws-gateway";
+  const GW_CONSUMER = `ws-gw-${process.pid}`;
 
-  // fees:coin:{token} → coinFeeUpdate
-  await sub.pSubscribe("fees:coin:*", (msg) => {
-    let data: unknown;
-    try { data = JSON.parse(msg); } catch { return; }
-    broadcast({ type: "coinFeeUpdate", data });
-  });
 
-  // fees:protocol → protocolFeeUpdate
-  await sub.subscribe("fees:protocol", (msg) => {
-    let data: unknown;
-    try { data = JSON.parse(msg); } catch { return; }
-    broadcast({ type: "protocolFeeUpdate", data });
-  });
+  let gwRunning = true;
+  const gwClients: RedisClient[] = [];
 
-  // stream:meta → new_token + tokenList (read via consumer group)
-  const metaStreamReader = await makeRedisClient(redisUrl);
-  const META_GROUP    = "ws-gateway";
-  const META_CONSUMER = `ws-gateway-${process.pid}`;
-  try {
-    await metaStreamReader.xGroupCreate(EVENT_CHANNELS.meta, META_GROUP, "0", { MKSTREAM: true });
-  } catch (err: any) {
-    if (!err?.message?.includes("BUSYGROUP")) throw err;
+  async function readStream(
+    stream: string,
+    handler: (data: string) => void,
+  ): Promise<void> {
+    const client = await makeRedisClient(redisUrl);
+    gwClients.push(client);
+    try {
+      await client.xGroupCreate(stream, GW_GROUP, "0", { MKSTREAM: true });
+    } catch (err: any) {
+      if (!err?.message?.includes("BUSYGROUP")) { /* ok */ }
+    }
+    (async () => {
+      while (gwRunning) {
+        try {
+          const results = await client.xReadGroup(
+            GW_GROUP, GW_CONSUMER,
+            [{ key: stream, id: ">" }],
+            { COUNT: 50, BLOCK: 2000 },
+          );
+          if (!results) continue;
+          for (const { messages } of results) {
+            for (const { id, message } of messages) {
+              try {
+                handler(message.data);
+              } catch (err) {
+                logger.warn({ err, stream, messageId: id }, "Gateway handler error");
+              }
+              await client.xAck(stream, GW_GROUP, id);
+            }
+          }
+        } catch (err) {
+          logger.error({ err, stream }, "Gateway stream read error");
+          if (!gwRunning) break;
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+      }
+    })().catch((err) => logger.error({ err, stream }, "Gateway stream loop crashed"));
   }
 
-  const readMetaStream = async () => {
-    while (true) {
-      try {
-        const results = await metaStreamReader.xReadGroup(
-          META_GROUP, META_CONSUMER,
-          [{ key: EVENT_CHANNELS.meta, id: ">" }],
-          { COUNT: 20, BLOCK: 2000 },
-        );
-        if (!results) continue;
-        for (const { messages } of results) {
-          for (const { id, message } of messages) {
-            try {
-              const payload = JSON.parse(message.data) as {
-                eventType?: string; tokenAddress?: string;
-                name?: string | null; symbol?: string | null; totalSupply?: string | null;
-              };
-              if (payload.eventType === "TokenMetaUpdated" && payload.tokenAddress) {
-                const addr = payload.tokenAddress.toLowerCase();
-                const meta = tokenMetaMap.get(addr) ?? { name: null, symbol: null, totalSupply: null, mcapEth: null, sparkline: [] };
-                if (payload.name)        meta.name        = payload.name;
-                if (payload.symbol)      meta.symbol      = payload.symbol;
-                if (payload.totalSupply) meta.totalSupply = typeof payload.totalSupply === "string" && payload.totalSupply.endsWith("n")
-                  ? payload.totalSupply.slice(0, -1)
-                  : payload.totalSupply;
-                tokenMetaMap.set(addr, meta);
-              }
-              if (payload.eventType === "PoolCreated" && payload.tokenAddress) {
-                const addr = payload.tokenAddress.toLowerCase();
-                if (!tokenMetaMap.has(addr)) {
-                  tokenMetaMap.set(addr, {
-                    name: payload.name ?? null, symbol: payload.symbol ?? null,
-                    totalSupply: payload.totalSupply ?? null, mcapEth: null, sparkline: [],
-                  });
-                } else {
-                  const meta = tokenMetaMap.get(addr);
-                  if (meta) {
-                    if (!meta.name        && payload.name)        meta.name        = payload.name;
-                    if (!meta.symbol      && payload.symbol)      meta.symbol      = payload.symbol;
-                    if (!meta.totalSupply && payload.totalSupply) meta.totalSupply = payload.totalSupply;
-                  }
-                }
-                lastMetaLoad = 0;
-                broadcast({ type: "new_token", data: payload });
-                refreshTokenMeta(reader).then(() => broadcastTokenList(reader, pool)).catch(() => {});
-              }
-            } catch { /* ignore parse errors */ }
-            await metaStreamReader.xAck(EVENT_CHANNELS.meta, META_GROUP, id);
-          }
-        }
-      } catch (err) {
-        logger.error({ err }, "Meta stream read error");
-        await new Promise((r) => setTimeout(r, 1000));
-      }
-    }
-  };
-  readMetaStream();
-
-  // chainlink:rate → tokenList USD refresh
-  await sub.subscribe("chainlink:rate", () => {
-    lastMetaLoad = 0;
-    refreshTokenMeta(reader).then(() => broadcastTokenList(reader, pool)).catch(() => {});
+  // stream:ui:trades → activity + priceUpdate + tokenList
+  readStream(UI_STREAMS.trades, (raw) => {
+    let data: any;
+    try { data = JSON.parse(raw); } catch { return; }
+    if (data.type !== "trade") return; // skip wallet/fee events sharing this stream
+    const token = (data.tokenAddress || "").toLowerCase();
+    if (!token) return;
+    onTradeUpdate(token, raw, reader, pool);
   });
 
-  logger.info("WS Redis subscriptions active");
+  // stream:ui:candles → candle + sparklineUpdate
+  readStream(UI_STREAMS.candles, (raw) => {
+    let data: any;
+    try { data = JSON.parse(raw); } catch { return; }
+    const ch = `candles:${data.resolution}:${data.tokenAddress}`;
+    onCandleUpdate(ch, raw);
+  });
+
+  // stream:ui:fees → coinFeeUpdate + protocolFeeUpdate
+  readStream(UI_STREAMS.fees, (raw) => {
+    let data: any;
+    try { data = JSON.parse(raw); } catch { return; }
+    if (data.type === "protocol") {
+      broadcast({ type: "protocolFeeUpdate", data });
+    } else {
+      broadcast({ type: "coinFeeUpdate", data });
+    }
+  });
+
+  // stream:ui:rate → refresh USD prices
+  readStream(UI_STREAMS.rate, () => {
+    lastMetaLoad = 0;
+    refreshTokenMeta(reader).then(() => broadcastTokenList(reader, pool)).catch((err: unknown) => logger.debug({ err }, "Background task error"));
+  });
+
+  // stream:meta → new_token + tokenList
+  readStream(EVENT_CHANNELS.meta, (raw) => {
+    let payload: any;
+    try { payload = JSON.parse(raw); } catch { return; }
+    if (payload.eventType === "TokenMetaUpdated" && payload.tokenAddress) {
+      const addr = payload.tokenAddress.toLowerCase();
+      const meta = tokenMetaMap.get(addr) ?? { name: null, symbol: null, totalSupply: null, mcapEth: null, sparkline: [] };
+      if (payload.name)        meta.name        = payload.name;
+      if (payload.symbol)      meta.symbol      = payload.symbol;
+      if (payload.totalSupply) meta.totalSupply = typeof payload.totalSupply === "string" && payload.totalSupply.endsWith("n")
+        ? payload.totalSupply.slice(0, -1) : payload.totalSupply;
+      setTokenMeta(addr, meta);
+    }
+    if (payload.eventType === "PoolCreated" && payload.tokenAddress) {
+      const addr = payload.tokenAddress.toLowerCase();
+      if (!tokenMetaMap.has(addr)) {
+        setTokenMeta(addr, {
+          name: payload.name ?? null, symbol: payload.symbol ?? null,
+          totalSupply: payload.totalSupply ?? null, mcapEth: null, sparkline: [],
+        });
+      } else {
+        const meta = tokenMetaMap.get(addr);
+        if (meta) {
+          if (!meta.name && payload.name) meta.name = payload.name;
+          if (!meta.symbol && payload.symbol) meta.symbol = payload.symbol;
+          if (!meta.totalSupply && payload.totalSupply) meta.totalSupply = payload.totalSupply;
+        }
+      }
+      lastMetaLoad = 0;
+      broadcast({ type: "new_token", data: payload });
+      refreshTokenMeta(reader).then(() => broadcastTokenList(reader, pool)).catch((err: unknown) => logger.debug({ err }, "Background task error"));
+    }
+  });
+
+  logger.info("WS gateway stream readers active");
 
   // Server-side heartbeat: ping every client, drop if no pong within timeout
   setInterval(() => {
@@ -468,18 +476,10 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
     }
   }, HEARTBEAT_INTERVAL);
 
-  setInterval(() => { lastMetaLoad = 0; refreshTokenMeta(reader).catch(() => {}); }, 60_000);
+  setInterval(() => { lastMetaLoad = 0; refreshTokenMeta(reader).catch((err: unknown) => logger.debug({ err }, "Background task error")); }, 60_000);
 
   // WS endpoint
-  app.get<{ Querystring: { token?: string } }>("/ws", { websocket: true }, (socket, req) => {
-    const jwtSecret = process.env.JWT_SECRET;
-    if (jwtSecret) {
-      const token = req.query.token;
-      if (!token || !verifyJwt(token, jwtSecret)) {
-        socket.close(4001, "Unauthorized");
-        return;
-      }
-    }
+  app.get<{ Querystring: { token?: string } }>("/ws", { websocket: true }, (socket) => {
 
     const tracked: TrackedClient = { ws: socket, alive: true };
     clientMap.set(socket, tracked);
@@ -507,7 +507,7 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
         if (socket.readyState === socket.OPEN) {
           socket.send(JSON.stringify({ type: "tokenList", data: sortByMcap(list) }));
         }
-      } catch { /* non-fatal */ }
+      } catch (err) { logger.debug({ err }, "Non-fatal error"); }
     })();
 
     socket.on("message", (raw) => {
@@ -517,7 +517,7 @@ export const gatewayPlugin: FastifyPluginAsync<GatewayOpts> = async (app, { redi
           tracked.alive = true;
           socket.send(JSON.stringify({ type: "pong" }));
         }
-      } catch { /* ignore */ }
+      } catch (err) { logger.debug({ err }, "Ignored error"); }
     });
 
     socket.on("close", () => {

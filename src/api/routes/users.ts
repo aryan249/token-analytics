@@ -4,25 +4,22 @@ import { KEYS, getEthUsdRate, type RedisClient } from "../../clients/redis";
 import { withCache } from "../cache";
 import { getWalletRoyalties }  from "../../utils/db/fees";
 import { getWalletActivity }   from "../../utils/db/activity";
-import { ethPriceToUsd, formatUsd } from "../../utils/math";
+import { ethPriceToUsd, formatUsd, weiToEth } from "../../utils/math";
 
-function weiToEth(wei: string | bigint | null | undefined): string | null {
-  if (wei == null) return null;
-  try {
-    const n = typeof wei === "bigint" ? wei : BigInt(wei);
-    if (n === 0n) return "0";
-    const WAD = 10n ** 18n;
-    const whole = n / WAD;
-    const frac  = n % WAD;
-    if (frac === 0n) return whole.toString();
-    return `${whole}.${frac.toString().padStart(18, "0").replace(/0+$/, "")}`;
-  } catch { return null; }
-}
 
 interface Opts { pool: Pool; redis: RedisClient; }
 
+const ADDR_RE = /^0x[a-f0-9]{40}$/;
+
 export const userRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
   const { pool, redis } = opts;
+
+  app.addHook("preHandler", async (req, reply) => {
+    const wallet = (req.params as any)?.wallet;
+    if (wallet && !ADDR_RE.test(wallet.toLowerCase())) {
+      return reply.status(400).send({ error: "Invalid wallet address" });
+    }
+  });
 
   // ── GET /users/:wallet/positions ──────────────────────────────────────────────
   // Positions from holder_balances (current token holdings)
@@ -30,8 +27,8 @@ export const userRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     "/:wallet/positions",
     async (req, reply) => {
       const wallet = req.params.wallet.toLowerCase();
-      const limit  = Math.min(Number(req.query.limit  ?? 50), 200);
-      const offset = Math.max(Number(req.query.offset ?? 0),  0);
+      const limit  = Math.min(Number(req.query.limit ?? 50) || 50, 200);
+      const offset = Math.max(Number(req.query.offset ?? 0) || 0, 0);
 
       const [ethUsdRate, result] = await Promise.all([
         getEthUsdRate(redis),
@@ -122,7 +119,7 @@ export const userRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
       const wallet = req.params.wallet.toLowerCase();
 
       const data = await withCache(
-        redis, KEYS.apiRoyalties(wallet), 60,
+        redis, KEYS.apiRoyalties(wallet), 15,
         async () => {
           const [summary, ethUsdRate] = await Promise.all([
             getWalletRoyalties(pool, wallet),
@@ -161,8 +158,8 @@ export const userRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
     "/:wallet/activity",
     async (req, reply) => {
       const wallet = req.params.wallet.toLowerCase();
-      const limit  = Math.min(Number(req.query.limit  ?? 50), 200);
-      const offset = Math.max(Number(req.query.offset ?? 0),  0);
+      const limit  = Math.min(Number(req.query.limit ?? 50) || 50, 200);
+      const offset = Math.max(Number(req.query.offset ?? 0) || 0, 0);
 
       const [result, ethUsdRate] = await Promise.all([
         getWalletActivity(pool, wallet, limit, offset),

@@ -118,6 +118,14 @@ import {
     private async onNewHead(block: PendingBlock): Promise<void> {
       this.latestBlock = block.number;
       this.pendingBlocks.set(block.number, block);
+
+      // Cap pending blocks to prevent memory leak on deep reorgs
+      if (this.pendingBlocks.size > 100) {
+        const oldest = [...this.pendingBlocks.keys()].sort((a, b) => (a < b ? -1 : 1))[0];
+        this.pendingBlocks.delete(oldest);
+        logger.warn({ dropped: oldest.toString(), size: this.pendingBlocks.size }, "Dropped old pending block");
+      }
+
       await this.drainConfirmedBlocks();
 
       this.blocksSinceRefresh++;
@@ -212,6 +220,10 @@ import {
         if (e.eventType === "ManagerDeployed") {
           const m = (e as ManagerDeployedEvent).manager.toLowerCase();
           if (!this.dynamicManagers.has(m)) {
+            if (this.dynamicManagers.size >= 50_000) {
+              logger.warn({ size: this.dynamicManagers.size }, "Dynamic managers cap reached, skipping");
+              continue;
+            }
             this.dynamicManagers.add(m);
             logger.info({ manager: m }, "Dynamic manager discovered");
           }

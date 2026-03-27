@@ -53,14 +53,13 @@ export type EventChannel = (typeof EVENT_CHANNELS)[keyof typeof EVENT_CHANNELS];
 /** Max stream length before older entries are trimmed (approximate). */
 export const STREAM_MAX_LEN = 10_000;
 
-// ── UI push channels (processors → WebSocket gateway) ────────────────────────
+// ── UI streams (processors → WebSocket gateway via Redis Streams) ────────────
 
-export const CHANNELS = {
-  tokenUpdate:       (tokenAddress: string)                     => `updates:${tokenAddress.toLowerCase()}`,
-  candleUpdate:      (tokenAddress: string, resolution: string) => `candles:${resolution}:${tokenAddress.toLowerCase()}`,
-  walletUpdate:      (walletAddress: string)                    => `wallet:${walletAddress.toLowerCase()}`,
-  coinFeeUpdate:     (tokenAddress: string)                     => `fees:coin:${tokenAddress.toLowerCase()}`,
-  protocolFeeUpdate: ()                                         => "fees:protocol",
+export const UI_STREAMS = {
+  trades:   "stream:ui:trades",    // trade activity + price updates
+  candles:  "stream:ui:candles",   // candle tip updates
+  fees:     "stream:ui:fees",      // fee distributions
+  rate:     "stream:ui:rate",      // ETH/USD rate changes
 } as const;
 
 export async function setTokenState(client: RedisClient, tokenAddress: string, state: object): Promise<void> {
@@ -89,22 +88,27 @@ export async function flushTokenCache(client: RedisClient, tokenAddress: string)
   await client.del(keys);
 }
 
-export async function publishTokenUpdate(client: RedisClient, tokenAddress: string, payload: object): Promise<void> {
-  await client.publish(CHANNELS.tokenUpdate(tokenAddress), JSON.stringify(payload));
+export async function publishTokenUpdate(client: RedisClient, _tokenAddress: string, payload: object): Promise<void> {
+  await client.xAdd(UI_STREAMS.trades, "*", { data: JSON.stringify(payload) },
+    { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAX_LEN } });
 }
 
 export async function publishCandleUpdate(client: RedisClient, tokenAddress: string, resolution: string, payload: object): Promise<void> {
-  await client.publish(CHANNELS.candleUpdate(tokenAddress, resolution), JSON.stringify(payload));
+  await client.xAdd(UI_STREAMS.candles, "*", { data: JSON.stringify({ ...payload, tokenAddress, resolution }) },
+    { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAX_LEN } });
 }
 
 export async function publishWalletUpdate(client: RedisClient, walletAddress: string, payload: object): Promise<void> {
-  await client.publish(CHANNELS.walletUpdate(walletAddress), JSON.stringify(payload));
+  await client.xAdd(UI_STREAMS.trades, "*", { data: JSON.stringify({ ...payload, walletAddress }) },
+    { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAX_LEN } });
 }
 
-export async function publishCoinFeeUpdate(client: RedisClient, tokenAddress: string, payload: object): Promise<void> {
-  await client.publish(CHANNELS.coinFeeUpdate(tokenAddress), JSON.stringify(payload));
+export async function publishCoinFeeUpdate(client: RedisClient, _tokenAddress: string, payload: object): Promise<void> {
+  await client.xAdd(UI_STREAMS.fees, "*", { data: JSON.stringify(payload) },
+    { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAX_LEN } });
 }
 
 export async function publishProtocolFeeUpdate(client: RedisClient, payload: object): Promise<void> {
-  await client.publish(CHANNELS.protocolFeeUpdate(), JSON.stringify(payload));
+  await client.xAdd(UI_STREAMS.fees, "*", { data: JSON.stringify({ ...payload, type: "protocol" }) },
+    { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAX_LEN } });
 }
