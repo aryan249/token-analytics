@@ -87,19 +87,26 @@ export const authRoutes: FastifyPluginAsync<AuthOpts> = async (app, { redis, jwt
 };
 
 export function jwtAuthHook(jwtSecret: string) {
-  const PUBLIC_PATHS = new Set(["/health", "/auth/nonce", "/auth/login"]);
+  const PUBLIC_PATHS = new Set(["/health", "/metrics", "/auth/nonce", "/auth/login"]);
   const STATIC_EXTENSIONS = new Set([".html", ".css", ".js", ".ico", ".png", ".svg", ".json"]);
+
+  // Public GET routes — analytics data that anyone can read without auth
+  const PUBLIC_GET_PREFIXES = [
+    "/tokens",
+    "/stats",
+  ];
 
   return async (req: FastifyRequest, reply: FastifyReply) => {
     const path = req.url.split("?")[0];
 
-    // Public: health, auth, websocket, static files, root
+    // Always public: health, auth, websocket, static files, root
     if (PUBLIC_PATHS.has(path) || path === "/ws" || path === "/") return;
     const ext = path.substring(path.lastIndexOf("."));
     if (STATIC_EXTENSIONS.has(ext)) return;
 
-    // Read-only GET requests are public (analytics dashboard)
-    if (req.method === "GET") return;
+    // Public GET routes: token data + stats are public read-only
+    // User-specific routes (/users/:wallet/*) require auth
+    if (req.method === "GET" && PUBLIC_GET_PREFIXES.some(p => path.startsWith(p))) return;
 
     const header = req.headers.authorization;
     if (!header?.startsWith("Bearer ")) {
