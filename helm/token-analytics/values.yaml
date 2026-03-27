@@ -19,7 +19,6 @@ indexer:
     limits:   { cpu: 500m, memory: 512Mi }
   env:
     CHAIN_ID: "8453"
-    CONFIRMATION_DEPTH: "3"
     BATCH_SIZE: "100"
     LOG_LEVEL: "info"
 
