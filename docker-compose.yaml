@@ -9,9 +9,9 @@ x-common: &common
       condition: service_healthy
   env_file: .env
   environment:
-    POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
+    POSTGRES_URL: postgresql://postgres:${POSTGRES_PASSWORD:-localdev}@postgres:5432/flaunch
     REDIS_URL:    redis://redis:6379
-    NODE_ENV:     production
+    NODE_ENV:     development
   restart: unless-stopped
   logging:
     driver: json-file
@@ -28,7 +28,7 @@ services:
     environment:
       POSTGRES_DB:       flaunch
       POSTGRES_USER:     postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev}
     ports:
       - "5432:5432"
     volumes:
@@ -94,10 +94,10 @@ services:
     <<: *common
     command: ["npx", "node", "dist/api/server.js"]
     environment:
-      POSTGRES_URL: postgresql://postgres:password@postgres:5432/flaunch
+      POSTGRES_URL: postgresql://postgres:${POSTGRES_PASSWORD:-localdev}@postgres:5432/flaunch
       REDIS_URL:    redis://redis:6379
       API_PORT:     "3000"
-      NODE_ENV:     production
+      NODE_ENV:     development
     ports:
       - "3000:3000"
 

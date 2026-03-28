@@ -109,6 +109,12 @@ import {
         onError: (err) => logger.error({ err }, "newHeads subscription error"),
       });
 
+      // Signal readiness + liveness to K8s probes via /tmp files
+      const fs = await import("fs");
+      fs.writeFileSync("/tmp/indexer-ready", "");
+      setInterval(() => { try { fs.writeFileSync("/tmp/indexer-alive", ""); } catch {} }, 30_000);
+      fs.writeFileSync("/tmp/indexer-alive", "");
+
       logger.info("WebSocket subscription active");
     }
 

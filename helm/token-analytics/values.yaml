@@ -84,6 +84,8 @@ ingress:
   enabled: true
   className: alb
   host: ""
+  # Set certificateArn to enable HTTPS (get free cert from ACM)
+  certificateArn: ""
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip

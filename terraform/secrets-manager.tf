@@ -2,7 +2,7 @@
 
 resource "aws_secretsmanager_secret" "app" {
   name                    = "${var.project}/app-secrets"
-  recovery_window_in_days = 0 # immediate delete for dev (set to 7+ for prod)
+  recovery_window_in_days = 7
 
   tags = { Name = "${var.project}-app-secrets" }
 }

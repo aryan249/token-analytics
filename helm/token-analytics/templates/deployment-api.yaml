@@ -18,11 +18,14 @@ spec:
     spec:
       {{- include "token-analytics.securityContext" . | nindent 6 }}
       {{- include "token-analytics.antiAffinity" (dict "app" "api") | nindent 6 }}
+      {{- include "token-analytics.topologySpread" (dict "app" "api") | nindent 6 }}
+      terminationGracePeriodSeconds: 60
       containers:
         - name: api
           image: {{ include "token-analytics.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- include "token-analytics.containerSecurity" . | nindent 10 }}
+          {{- include "token-analytics.lifecycle" . | nindent 10 }}
           command: ["node", "dist/api/server.js"]
           ports:
             - containerPort: {{ .Values.api.port }}
@@ -31,23 +34,26 @@ spec:
             {{- include "token-analytics.envFrom" . | nindent 12 }}
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: {{ .Values.api.port }}
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: {{ .Values.api.port }}
-            initialDelaySeconds: 15
-            periodSeconds: 20
           startupProbe:
             httpGet:
               path: /health
               port: {{ .Values.api.port }}
             failureThreshold: 10
             periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.api.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.api.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
       {{- include "token-analytics.tmpVolume" . | nindent 6 }}
       restartPolicy: Always

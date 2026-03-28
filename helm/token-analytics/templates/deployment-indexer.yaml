@@ -18,21 +18,36 @@ spec:
         app: indexer
     spec:
       {{- include "token-analytics.securityContext" . | nindent 6 }}
+      {{- include "token-analytics.antiAffinity" (dict "app" "indexer") | nindent 6 }}
+      terminationGracePeriodSeconds: 90
       containers:
         - name: indexer
           image: {{ include "token-analytics.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- include "token-analytics.containerSecurity" . | nindent 10 }}
+          {{- include "token-analytics.lifecycle" . | nindent 10 }}
           command: ["node", "dist/indexer/main.js"]
           envFrom:
             {{- include "token-analytics.envFrom" . | nindent 12 }}
           resources:
             {{- toYaml .Values.indexer.resources | nindent 12 }}
+          startupProbe:
+            exec:
+              command: ["node", "-e", "setTimeout(()=>process.exit(0),0)"]
+            failureThreshold: 12
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["node", "-e", "try{require('fs').accessSync('/tmp/indexer-ready');process.exit(0)}catch{process.exit(1)}"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 3
           livenessProbe:
             exec:
-              command: ["node", "-e", "try{require('fs').statSync('/proc/1/status');process.exit(0)}catch{process.exit(1)}"]
-            initialDelaySeconds: 15
+              command: ["node", "-e", "try{const s=require('fs').statSync('/tmp/indexer-alive');process.exit(Date.now()-s.mtimeMs<120000?0:1)}catch{process.exit(1)}"]
+            initialDelaySeconds: 30
             periodSeconds: 30
             failureThreshold: 3
+            timeoutSeconds: 5
       {{- include "token-analytics.tmpVolume" . | nindent 6 }}
       restartPolicy: Always
