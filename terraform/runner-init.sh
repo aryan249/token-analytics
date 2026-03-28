@@ -51,3 +51,17 @@ su - runner -c "./config.sh --unattended \
 # Install as service
 ./svc.sh install runner
 ./svc.sh start
+
+# ── Self-healing: watchdog cron + docker cleanup ─────────────────────────────
+
+# Restart runner agent if it dies (check every 5 minutes)
+cat > /etc/cron.d/runner-watchdog << 'CRON'
+*/5 * * * * root systemctl is-active actions.runner.* || systemctl restart actions.runner.*
+CRON
+
+# Clean up docker daily at 3 AM to prevent disk full (keep last 24h of images)
+cat > /etc/cron.d/docker-cleanup << 'CRON'
+0 3 * * * root docker system prune -af --filter "until=24h" 2>/dev/null
+CRON
+
+chmod 644 /etc/cron.d/runner-watchdog /etc/cron.d/docker-cleanup

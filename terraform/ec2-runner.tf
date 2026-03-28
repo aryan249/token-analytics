@@ -60,5 +60,62 @@ resource "aws_instance" "runner" {
     runner_labels = "self-hosted,linux,x64"
   }))
 
+  # Auto-recover if instance fails hardware check
+  monitoring = true  # detailed CloudWatch monitoring (1-min intervals)
+
   tags = { Name = "${var.project}-github-runner" }
+}
+
+# ── CloudWatch Alarms — runner health monitoring ─────────────────────────────
+
+# Alert if instance status check fails (hardware/network issue)
+resource "aws_cloudwatch_metric_alarm" "runner_status_check" {
+  alarm_name          = "${var.project}-runner-status-check"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "StatusCheckFailed"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 0
+  alarm_description   = "GitHub Actions runner instance failed status check"
+  dimensions = {
+    InstanceId = aws_instance.runner.id
+  }
+  # Auto-recover the instance on hardware failure
+  alarm_actions = ["arn:aws:automate:${var.aws_region}:ec2:recover"]
+}
+
+# Alert if CPU is at 0% for 10 minutes (runner agent likely dead)
+resource "aws_cloudwatch_metric_alarm" "runner_idle" {
+  alarm_name          = "${var.project}-runner-idle"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 10
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Average"
+  threshold           = 1
+  alarm_description   = "Runner CPU near zero for 10min — agent may be dead"
+  dimensions = {
+    InstanceId = aws_instance.runner.id
+  }
+}
+
+# Alert if disk usage is high (docker images fill the 30GB volume)
+resource "aws_cloudwatch_metric_alarm" "runner_disk" {
+  alarm_name          = "${var.project}-runner-disk-full"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "disk_used_percent"
+  namespace           = "CWAgent"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 85
+  alarm_description   = "Runner disk usage above 85%"
+  dimensions = {
+    InstanceId = aws_instance.runner.id
+    path       = "/"
+    fstype     = "xfs"
+  }
 }
