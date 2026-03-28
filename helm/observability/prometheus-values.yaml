@@ -1,0 +1,220 @@
+# kube-prometheus-stack values — sized for t3.small (2 vCPU, 2GB RAM)
+# Install: helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+#            -n monitoring --create-namespace -f helm/observability/prometheus-values.yaml
+
+# ── Prometheus ───────────────────────────────────────────────────────────────
+
+prometheus:
+  prometheusSpec:
+    # Minimal resources for free-tier nodes
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    # Short retention — free-tier disk is limited
+    retention: 3d
+    retentionSize: 2GB
+    # Scrape our app metrics
+    additionalScrapeConfigs:
+      - job_name: "token-analytics-api"
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: ["token-analytics"]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: api
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: http
+            action: keep
+        metrics_path: /metrics
+        scrape_interval: 15s
+    # Storage — use emptyDir for free tier (data lost on pod restart)
+    storageSpec: {}
+
+# ── Grafana ──────────────────────────────────────────────────────────────────
+
+grafana:
+  enabled: true
+  adminPassword: "token-analytics-grafana"  # Change in production
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  service:
+    type: ClusterIP
+  # Pre-configured datasources
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki.monitoring:3100
+      access: proxy
+      isDefault: false
+  # Pre-built dashboards
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: "token-analytics"
+          orgId: 1
+          folder: "Token Analytics"
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/token-analytics
+  dashboards:
+    token-analytics:
+      app-overview:
+        json: |
+          {
+            "title": "Token Analytics — Overview",
+            "uid": "token-analytics-overview",
+            "panels": [
+              {
+                "title": "Events Processed / sec",
+                "type": "timeseries",
+                "targets": [{"expr": "rate(events_processed_total[5m])", "legendFormat": "{{processor}} — {{status}}"}],
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+              },
+              {
+                "title": "Event Processing Latency (P95)",
+                "type": "timeseries",
+                "targets": [{"expr": "histogram_quantile(0.95, rate(event_processing_duration_seconds_bucket[5m]))", "legendFormat": "{{processor}}"}],
+                "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+              },
+              {
+                "title": "HTTP Request Duration (P95)",
+                "type": "timeseries",
+                "targets": [{"expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))", "legendFormat": "{{method}} {{route}}"}],
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+              },
+              {
+                "title": "HTTP Requests / sec",
+                "type": "timeseries",
+                "targets": [{"expr": "rate(http_requests_total[5m])", "legendFormat": "{{method}} {{route}} {{status_code}}"}],
+                "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+              },
+              {
+                "title": "Cache Hit Rate",
+                "type": "stat",
+                "targets": [{"expr": "sum(rate(cache_hits_total[5m])) / (sum(rate(cache_hits_total[5m])) + sum(rate(cache_misses_total[5m])))"}],
+                "gridPos": {"h": 4, "w": 6, "x": 0, "y": 16}
+              },
+              {
+                "title": "WebSocket Clients",
+                "type": "stat",
+                "targets": [{"expr": "ws_clients_connected"}],
+                "gridPos": {"h": 4, "w": 6, "x": 6, "y": 16}
+              },
+              {
+                "title": "Dead Letter Queue",
+                "type": "stat",
+                "targets": [{"expr": "sum(dead_letter_total)"}],
+                "gridPos": {"h": 4, "w": 6, "x": 12, "y": 16}
+              },
+              {
+                "title": "Errors / sec",
+                "type": "timeseries",
+                "targets": [{"expr": "rate(errors_total[5m])", "legendFormat": "{{source}} — {{type}}"}],
+                "gridPos": {"h": 4, "w": 6, "x": 18, "y": 16}
+              }
+            ],
+            "time": {"from": "now-1h", "to": "now"},
+            "refresh": "30s"
+          }
+
+# ── AlertManager ─────────────────────────────────────────────────────────────
+
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+# ── Disable heavy components not needed on free tier ─────────────────────────
+
+kubeStateMetrics:
+  enabled: true
+nodeExporter:
+  enabled: true
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+# ── Alerting Rules ───────────────────────────────────────────────────────────
+
+additionalPrometheusRulesMap:
+  token-analytics-alerts:
+    groups:
+      - name: token-analytics
+        rules:
+          - alert: HighErrorRate
+            expr: rate(errors_total[5m]) > 0.1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Error rate above 0.1/sec for 5 minutes"
+              description: "{{ $labels.source }} — {{ $labels.type }}: {{ $value }}/sec"
+
+          - alert: DeadLetterQueueGrowing
+            expr: increase(dead_letter_total[1h]) > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Events sent to dead-letter queue"
+              description: "{{ $labels.stream }}: {{ $value }} events dead-lettered in last hour"
+
+          - alert: HighAPILatency
+            expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "API P95 latency above 2 seconds"
+              description: "{{ $labels.route }}: {{ $value }}s"
+
+          - alert: PodCrashLooping
+            expr: increase(kube_pod_container_status_restarts_total{namespace="token-analytics"}[1h]) > 3
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Pod restarting frequently"
+              description: "{{ $labels.pod }}: {{ $value }} restarts in last hour"
+
+          - alert: HealthCheckDegraded
+            expr: up{job="token-analytics-api"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Token Analytics API is down"
+              description: "Health check failing for 2 minutes"
+
+          - alert: CacheHitRateLow
+            expr: sum(rate(cache_hits_total[5m])) / (sum(rate(cache_hits_total[5m])) + sum(rate(cache_misses_total[5m]))) < 0.5
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cache hit rate below 50%"
+              description: "Current: {{ $value | humanizePercentage }}"

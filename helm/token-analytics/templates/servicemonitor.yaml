@@ -1,0 +1,23 @@
+{{- if .Values.monitoring.enabled }}
+# ServiceMonitor tells Prometheus to scrape our API pods' /metrics endpoint
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Chart.Name }}-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "token-analytics.labels" . | nindent 4 }}
+    release: prometheus  # must match Prometheus helm release name
+spec:
+  selector:
+    matchLabels:
+      app: api
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+{{- end }}

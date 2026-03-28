@@ -92,3 +92,7 @@ ingress:
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
     alb.ingress.kubernetes.io/stickiness-enabled: "true"
     alb.ingress.kubernetes.io/stickiness-type: "app_cookie"
+
+# ── Monitoring ──────────────────────────────────────────────────────────────
+monitoring:
+  enabled: true
