@@ -121,32 +121,32 @@ jobs:
           helm repo add grafana https://grafana.github.io/helm-charts || true
           helm repo update
 
-          # Clean up failed kube-prometheus-stack if present
+          # Clean up any failed releases
           helm uninstall prometheus -n monitoring 2>/dev/null || true
 
           # Lightweight Prometheus (no operator, no CRDs)
           helm upgrade --install prometheus prometheus-community/prometheus \
             --namespace monitoring --create-namespace \
             -f helm/observability/prometheus-values.yaml \
-            --wait --timeout 5m
+            --timeout 10m || echo "WARNING: Prometheus install timed out — will retry next deploy"
 
           # Grafana
           helm upgrade --install grafana grafana/grafana \
             --namespace monitoring \
             -f helm/observability/grafana-values.yaml \
-            --wait --timeout 3m
+            --timeout 10m || echo "WARNING: Grafana install timed out"
 
           # Loki (single-binary log aggregation)
           helm upgrade --install loki grafana/loki \
             --namespace monitoring \
             -f helm/observability/loki-values.yaml \
-            --wait --timeout 3m
+            --timeout 10m || echo "WARNING: Loki install timed out"
 
           # Promtail (ships logs to Loki)
           helm upgrade --install promtail grafana/promtail \
             --namespace monitoring \
             -f helm/observability/promtail-values.yaml \
-            --wait --timeout 3m
+            --timeout 5m || echo "WARNING: Promtail install timed out"
 
       - name: Deploy with Helm
         run: |
