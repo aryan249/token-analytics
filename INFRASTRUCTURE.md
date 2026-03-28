@@ -160,6 +160,61 @@ When REDIS_REPLICA_URLS is configured, the scanner fans out to all regions:
 
 Each region:
   - Processors read from LOCAL Redis (no cross-region latency)
+```
+
+## 1d. VPC Peering (Cross-Region Connectivity)
+
+```
+For the scanner to publish to Redis in other regions, VPCs must be peered:
+
+  Primary Region (ap-south-1)              Peer Region (eu-west-1)
+  VPC: 10.0.0.0/16                         VPC: 10.1.0.0/16
+  ┌──────────────────────────┐             ┌──────────────────────────┐
+  │                          │             │                          │
+  │  Scanner pod             │             │  Redis (peer)            │
+  │    │                     │             │    ▲                     │
+  │    │ xAdd to peer Redis  │             │    │ port 6379           │
+  │    ▼                     │   VPC       │    │                     │
+  │  Private subnet          │  Peering    │  Private subnet          │
+  │  10.0.100.0/24           │◄───────────►│  10.1.100.0/24           │
+  │                          │  Connection │                          │
+  │  Route table:            │             │  Route table:            │
+  │   10.1.0.0/16 → pcx-... │             │   10.0.0.0/16 → pcx-... │
+  │                          │             │                          │
+  │  Security group:         │             │  Security group:         │
+  │   egress 6379 → 10.1/16 │             │   ingress 6379 ← 10.0/16│
+  └──────────────────────────┘             └──────────────────────────┘
+
+What the peering provides:
+  - Private-to-private routing (no internet traversal)
+  - DNS resolution across VPCs (can use ElastiCache hostnames)
+  - Security group rules restrict to Redis port only
+  - Latency: ~80ms cross-region (encrypted by AWS backbone)
+
+Setup:
+  1. Primary region (terraform/vpc-peering.tf):
+     Set var.peer_regions with peer VPC details → creates peering request + routes
+
+  2. Peer region (terraform/modules/vpc-peer-acceptor/):
+     Accept peering connection + add reverse routes + security group rules
+
+  3. Configure scanner:
+     REDIS_REPLICA_URLS=redis://<peer-redis-hostname>:6379
+```
+
+```hcl
+# Example: peer with eu-west-1
+peer_regions = [
+  {
+    region     = "eu-west-1"
+    vpc_id     = "vpc-0abc123def456"
+    vpc_cidr   = "10.1.0.0/16"
+    account_id = "207270671706"
+  }
+]
+```
+
+Each region:
   - API pods read from LOCAL Redis cache + LOCAL Postgres
   - Scanner publishes to ALL regions in 1 batched pipeline per region
   - Latency: max(US_redis, EU_redis, AP_redis) ≈ 80ms (parallel, not additive)
