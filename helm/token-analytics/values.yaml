@@ -26,49 +26,81 @@ config:
 indexer:
   replicas: 1
   resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits:   { cpu: 500m, memory: 512Mi }
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 # ── Processors (StatefulSets with consumer groups) ────────────────────────────
 processors:
   trade:
     replicas: 1
     resources:
-      requests: { cpu: 50m, memory: 128Mi }
-      limits:   { cpu: 250m, memory: 256Mi }
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
   token:
     replicas: 1
     resources:
-      requests: { cpu: 50m, memory: 128Mi }
-      limits:   { cpu: 250m, memory: 256Mi }
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
   candle:
     replicas: 1
     resources:
-      requests: { cpu: 50m, memory: 128Mi }
-      limits:   { cpu: 250m, memory: 256Mi }
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
   position:
     replicas: 1
     resources:
-      requests: { cpu: 50m, memory: 128Mi }
-      limits:   { cpu: 250m, memory: 256Mi }
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
   fees:
     replicas: 1
     resources:
-      requests: { cpu: 50m, memory: 128Mi }
-      limits:   { cpu: 250m, memory: 256Mi }
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
   price:
     replicas: 1
     resources:
-      requests: { cpu: 50m, memory: 64Mi }
-      limits:   { cpu: 100m, memory: 128Mi }
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
 
 # ── API (Deployment, horizontally scalable) ───────────────────────────────────
 api:
   replicas: 2
   port: 3000
   resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits:   { cpu: 500m, memory: 512Mi }
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
   hpa:
     enabled: true
     minReplicas: 2
@@ -110,7 +142,8 @@ podDefaults:
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: true
     capabilities:
-      drop: ["ALL"]
+      drop:
+        - "ALL"
   terminationGracePeriodSeconds: 60
   preStopSleepSeconds: 15
 
