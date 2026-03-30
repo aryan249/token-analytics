@@ -63,6 +63,12 @@ spec:
       labels:
         app.kubernetes.io/part-of: token-analytics
         environment: "{{env}}"
+      annotations:
+        # Argo CD Image Updater — watches ECR for new tags, auto-deploys
+        argocd-image-updater.argoproj.io/image-list: app=207270671706.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
+        argocd-image-updater.argoproj.io/app.update-strategy: latest
+        argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
+        argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
     spec:
       project: token-analytics
       source:
