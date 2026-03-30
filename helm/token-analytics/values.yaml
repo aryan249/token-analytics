@@ -13,16 +13,21 @@ externalSecrets:
   # All keys from this secret are auto-extracted — no need to list them here.
   # Just add new keys to AWS Secrets Manager and pods will get them on next sync.
 
+# ── Shared Config (injected into ALL pods via ConfigMap) ─────────────────────
+# Add new env vars here — no template changes needed.
+config:
+  CHAIN_ID: "8453"
+  BATCH_SIZE: "100"
+  LOG_LEVEL: "info"
+  NODE_ENV: "production"
+  API_PORT: "3000"
+
 # ── Indexer (StatefulSet, single instance) ────────────────────────────────────
 indexer:
   replicas: 1
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits:   { cpu: 500m, memory: 512Mi }
-  env:
-    CHAIN_ID: "8453"
-    BATCH_SIZE: "100"
-    LOG_LEVEL: "info"
 
 # ── Processors (StatefulSets with consumer groups) ────────────────────────────
 processors:
@@ -64,10 +69,6 @@ api:
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits:   { cpu: 500m, memory: 512Mi }
-  env:
-    API_PORT: "3000"
-    LOG_LEVEL: "info"
-    NODE_ENV: "production"
   hpa:
     enabled: true
     minReplicas: 2
