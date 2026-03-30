@@ -50,11 +50,11 @@ spec:
         elements:
           - env: staging
             namespace: token-analytics-staging
-            branch: staging
+            branch: fix/review-fixes
             valuesFile: values-staging.yaml
           - env: production
             namespace: token-analytics
-            branch: main
+            branch: feat/argocd-gitops
             valuesFile: values-production.yaml
   template:
     metadata:
