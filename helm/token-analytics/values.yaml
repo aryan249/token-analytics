@@ -10,12 +10,8 @@ externalSecrets:
   region: ap-south-1
   roleArn: "arn:aws:iam::207270671706:role/token-analytics-external-secrets-role"
   secretName: "token-analytics/app-secrets"
-  # Add new secret keys here — they'll be auto-pulled from Secrets Manager
-  keys:
-    - POSTGRES_URL
-    - REDIS_URL
-    - ALCHEMY_WS_URL
-    - JWT_SECRET
+  # All keys from this secret are auto-extracted — no need to list them here.
+  # Just add new keys to AWS Secrets Manager and pods will get them on next sync.
 
 # ── Indexer (StatefulSet, single instance) ────────────────────────────────────
 indexer:
