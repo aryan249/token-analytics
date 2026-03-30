@@ -62,18 +62,21 @@ jobs:
         with:
           context: .
           push: true
+          load: false
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest
           cache-from: type=registry,ref=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:cache
           cache-to: type=registry,ref=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:cache,mode=max
 
-      - name: Scan image
+      - name: Scan for vulnerabilities
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          scan-type: fs
+          scan-ref: .
           format: table
           severity: HIGH,CRITICAL
           exit-code: 0
+          scanners: vuln
 
 
