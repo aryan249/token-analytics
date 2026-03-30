@@ -1,4 +1,4 @@
-name: Infrastructure
+name: Setup Infrastructure
 
 on:
   push:
