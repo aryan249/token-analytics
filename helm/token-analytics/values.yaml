@@ -96,6 +96,24 @@ ingress:
     alb.ingress.kubernetes.io/stickiness-enabled: "true"
     alb.ingress.kubernetes.io/stickiness-type: "app_cookie"
 
+# ── Pod Defaults (applied to all workloads) ─────────────────────────────────
+# Change here → all pods updated. No template edits needed.
+podDefaults:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurity:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+  terminationGracePeriodSeconds: 60
+  preStopSleepSeconds: 15
+
 # ── Monitoring ──────────────────────────────────────────────────────────────
 monitoring:
   enabled: true
