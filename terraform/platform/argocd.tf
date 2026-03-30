@@ -24,7 +24,7 @@ resource "helm_release" "argocd" {
   name       = "argocd"
   repository = "https://argoproj.github.io/argo-helm"
   chart      = "argo-cd"
-  version    = "7.7.8"
+  version    = var.argocd_version
   namespace  = kubernetes_namespace.argocd.metadata[0].name
 
   # ClusterIP — access via port-forward only (secure)

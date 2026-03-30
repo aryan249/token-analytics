@@ -11,8 +11,8 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 0
-      maxUnavailable: 1
+      maxSurge: {{ .Values.podDefaults.rollingUpdate.maxSurge }}
+      maxUnavailable: {{ .Values.podDefaults.rollingUpdate.maxUnavailable }}
   selector:
     matchLabels:
       app: api
@@ -48,7 +48,7 @@ spec:
             {{- toYaml .Values.podDefaults.containerSecurity | nindent 12 }}
           volumeMounts:
             - name: tmp
-              mountPath: /tmp
+              mountPath: {{ .Values.podDefaults.tmpMountPath }}
           lifecycle:
             preStop:
               exec:
@@ -63,25 +63,19 @@ spec:
             {{- toYaml .Values.api.resources | nindent 12 }}
           startupProbe:
             httpGet:
-              path: /health
+              path: {{ .Values.podDefaults.healthPath }}
               port: {{ .Values.api.port }}
-            failureThreshold: 10
-            periodSeconds: 5
+            {{- toYaml .Values.probes.api.startup | nindent 12 }}
           readinessProbe:
             httpGet:
-              path: /health
+              path: {{ .Values.podDefaults.healthPath }}
               port: {{ .Values.api.port }}
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            timeoutSeconds: 3
+            {{- toYaml .Values.probes.api.readiness | nindent 12 }}
           livenessProbe:
             httpGet:
-              path: /health
+              path: {{ .Values.podDefaults.healthPath }}
               port: {{ .Values.api.port }}
-            initialDelaySeconds: 15
-            periodSeconds: 20
-            timeoutSeconds: 3
-            failureThreshold: 3
+            {{- toYaml .Values.probes.api.liveness | nindent 12 }}
       volumes:
         - name: tmp
           emptyDir: {}

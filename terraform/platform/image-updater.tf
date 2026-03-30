@@ -25,11 +25,11 @@ resource "helm_release" "argocd_image_updater" {
   }
   set {
     name  = "config.registries[0].api_url"
-    value = "https://207270671706.dkr.ecr.ap-south-1.amazonaws.com"
+    value = "https://${var.aws_account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
   }
   set {
     name  = "config.registries[0].prefix"
-    value = "207270671706.dkr.ecr.ap-south-1.amazonaws.com"
+    value = "${var.aws_account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
   }
   set {
     name  = "config.registries[0].default"

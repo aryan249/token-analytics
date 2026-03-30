@@ -146,6 +146,55 @@ podDefaults:
         - "ALL"
   terminationGracePeriodSeconds: 60
   preStopSleepSeconds: 15
+  healthPath: /health
+  tmpMountPath: /tmp
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
+# ── Probes ──────────────────────────────────────────────────────────────────
+probes:
+  api:
+    startup:
+      failureThreshold: 10
+      periodSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+    liveness:
+      initialDelaySeconds: 15
+      periodSeconds: 20
+      timeoutSeconds: 3
+      failureThreshold: 3
+  indexer:
+    startup:
+      failureThreshold: 12
+      periodSeconds: 10
+    readiness:
+      initialDelaySeconds: 20
+      periodSeconds: 15
+      timeoutSeconds: 3
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      failureThreshold: 3
+      timeoutSeconds: 5
+    stalenessMs: 120000
+  processors:
+    startup:
+      failureThreshold: 12
+      periodSeconds: 5
+    readiness:
+      initialDelaySeconds: 15
+      periodSeconds: 15
+      timeoutSeconds: 3
+    liveness:
+      initialDelaySeconds: 20
+      periodSeconds: 30
+      failureThreshold: 3
+      timeoutSeconds: 5
+    stalenessMs: 120000
 
 # ── Monitoring ──────────────────────────────────────────────────────────────
 monitoring:
