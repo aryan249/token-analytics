@@ -58,7 +58,10 @@ spec:
             - containerPort: {{ .Values.api.port }}
               protocol: TCP
           envFrom:
-            {{- include "token-analytics.envFrom" . | nindent 12 }}
+            - configMapRef:
+                name: {{ .Chart.Name }}-config
+            - secretRef:
+                name: {{ .Chart.Name }}-secrets
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
           startupProbe:

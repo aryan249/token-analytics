@@ -29,15 +29,15 @@ spec:
           averageUtilization: {{ .Values.api.hpa.targetMemoryUtilization }}
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 60
+      stabilizationWindowSeconds: {{ .Values.api.hpa.scaleUp.stabilizationSeconds }}
       policies:
         - type: Pods
-          value: 1
-          periodSeconds: 60
+          value: {{ .Values.api.hpa.scaleUp.pods }}
+          periodSeconds: {{ .Values.api.hpa.scaleUp.periodSeconds }}
     scaleDown:
-      stabilizationWindowSeconds: 300
+      stabilizationWindowSeconds: {{ .Values.api.hpa.scaleDown.stabilizationSeconds }}
       policies:
         - type: Pods
-          value: 1
-          periodSeconds: 120
+          value: {{ .Values.api.hpa.scaleDown.pods }}
+          periodSeconds: {{ .Values.api.hpa.scaleDown.periodSeconds }}
 {{- end }}

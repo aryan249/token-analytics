@@ -46,7 +46,10 @@ spec:
                 command: ["/bin/sh", "-c", "sleep {{ $.Values.podDefaults.preStopSleepSeconds }}"]
           command: ["node", "dist/processors/{{ $name }}.js"]
           envFrom:
-            {{- include "token-analytics.envFrom" $ | nindent 12 }}
+            - configMapRef:
+                name: {{ $.Chart.Name }}-config
+            - secretRef:
+                name: {{ $.Chart.Name }}-secrets
           resources:
             {{- toYaml $cfg.resources | nindent 12 }}
           startupProbe:
