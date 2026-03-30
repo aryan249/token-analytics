@@ -121,13 +121,18 @@ jobs:
             --set installCRDs=true \
             --wait --timeout 5m
 
-      # Monitoring stack disabled — t3.small nodes have 11 pod limit per node.
-      # With 10 app pods + 6 system pods + 3 ESO pods = 19 pods on 2 nodes (22 max).
-      # No room for 4 monitoring pods. Enable when nodes are upgraded.
-      #
-      # To install manually when capacity is available:
-      #   cd helm/observability && helm dependency build && cd ../..
-      #   helm upgrade --install observability helm/observability -n monitoring --create-namespace
+      - name: Install monitoring stack (umbrella chart)
+        run: |
+          cd helm/observability
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
+          helm repo add grafana https://grafana.github.io/helm-charts 2>/dev/null || true
+          helm repo update
+          helm dependency build
+          cd ../..
+
+          helm upgrade --install observability helm/observability \
+            --namespace monitoring --create-namespace \
+            --timeout 10m || echo "WARNING: Monitoring install timed out — will retry next deploy"
 
       - name: Deploy with Helm
         run: |

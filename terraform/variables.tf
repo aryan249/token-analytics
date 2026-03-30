@@ -39,7 +39,7 @@ variable "eks_node_instance_type" {
 
 variable "eks_node_desired" {
   type    = number
-  default = 2
+  default = 3
 }
 
 variable "eks_node_min" {
@@ -49,7 +49,7 @@ variable "eks_node_min" {
 
 variable "eks_node_max" {
   type    = number
-  default = 3
+  default = 4
 }
 
 # ── RDS ───────────────────────────────────────────────────────────────────────
