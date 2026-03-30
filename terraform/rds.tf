@@ -50,14 +50,14 @@ resource "aws_db_instance" "postgres" {
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
 
-  multi_az            = false
+  multi_az            = var.rds_multi_az
   publicly_accessible = false
   skip_final_snapshot    = false
   final_snapshot_identifier = "${var.project}-postgres-final"
 
   backup_retention_period = var.rds_backup_retention
-  backup_window           = "03:00-04:00"
-  maintenance_window      = "sun:04:00-sun:05:00"
+  backup_window           = var.rds_backup_window
+  maintenance_window      = var.rds_maintenance_window
 
   tags = { Name = "${var.project}-postgres" }
 }

@@ -61,7 +61,7 @@ resource "aws_elasticache_parameter_group" "redis" {
 resource "aws_elasticache_cluster" "redis" {
   cluster_id      = "${var.project}-redis"
   engine          = "redis"
-  engine_version  = "7.1"
+  engine_version  = var.redis_engine_version
   node_type       = var.redis_node_type
   num_cache_nodes = 1
   port            = 6379
@@ -71,8 +71,8 @@ resource "aws_elasticache_cluster" "redis" {
   security_group_ids   = [aws_security_group.redis.id]
 
   snapshot_retention_limit = 1
-  snapshot_window          = "04:00-05:00"
-  maintenance_window       = "sun:05:00-sun:06:00"
+  snapshot_window          = var.redis_snapshot_window
+  maintenance_window       = var.redis_maintenance_window
 
   tags = { Name = "${var.project}-redis" }
 }
