@@ -1,0 +1,80 @@
+# ── Production environment overrides ─────────────────────────────────────────
+# Inherits everything from values.yaml, overrides only what differs.
+
+namespace: token-analytics
+
+indexer:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  env:
+    CHAIN_ID: "8453"
+    BATCH_SIZE: "100"
+    LOG_LEVEL: "info"
+
+processors:
+  trade:
+    replicas: 1
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+  token:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 250m, memory: 256Mi }
+  candle:
+    replicas: 1
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+  position:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 250m, memory: 256Mi }
+  fees:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 250m, memory: 256Mi }
+  price:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits:   { cpu: 100m, memory: 128Mi }
+
+api:
+  replicas: 2
+  port: 3000
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+  env:
+    API_PORT: "3000"
+    LOG_LEVEL: "info"
+    NODE_ENV: "production"
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCpuUtilization: 70
+    targetMemoryUtilization: 80
+
+externalSecrets:
+  region: ap-south-1
+  roleArn: "arn:aws:iam::207270671706:role/token-analytics-external-secrets-role"
+  secretName: "token-analytics/app-secrets"
+
+ingress:
+  enabled: true
+  className: alb
+  host: ""
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/stickiness-enabled: "true"
+    alb.ingress.kubernetes.io/stickiness-type: "app_cookie"
+    alb.ingress.kubernetes.io/tags: "Environment=production"
