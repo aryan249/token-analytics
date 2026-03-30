@@ -137,9 +137,21 @@ resource "aws_iam_role_policy_attachment" "runner_ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-# Runner has NO eks:DescribeCluster — cannot run kubectl or helm.
-# Deployments are handled by Argo CD (in-cluster), not the CI runner.
-# Runner only needs: ECR push, S3/DynamoDB for Terraform state, SSM for management.
+# Runner has read-only EKS access — can verify deployments and get endpoints
+# but CANNOT deploy, edit, or delete any resources. Argo CD handles deploys.
+resource "aws_iam_role_policy" "runner_eks" {
+  name = "eks-read-only"
+  role = aws_iam_role.runner.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["eks:DescribeCluster", "eks:ListClusters"]
+      Resource = "arn:aws:eks:${var.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/${var.project}"
+    }]
+  })
+}
 
 resource "aws_iam_role_policy" "runner_tfstate" {
   name = "terraform-state"
