@@ -93,6 +93,30 @@ jobs:
             --query 'imageDetails[0].{Tag:imageTags[0],Pushed:imagePushedAt,Size:imageSizeInBytes}' \
             --output table
 
+      - name: Deploy this exact image via Argo CD
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'
+        run: |
+          # Only deploy from main/staging — feature branches just build + test
+          APP_NAME="token-analytics-production"
+          if [ "${{ github.ref }}" = "refs/heads/staging" ]; then
+            APP_NAME="token-analytics-staging"
+          fi
+
+          aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
+          kubectl patch application $APP_NAME -n argocd --type merge -p "{
+            \"spec\": {
+              \"source\": {
+                \"helm\": {
+                  \"parameters\": [
+                    {\"name\": \"image.tag\", \"value\": \"$IMAGE_TAG\", \"forceString\": true},
+                    {\"name\": \"image.repository\", \"value\": \"$ECR_REGISTRY/$ECR_REPOSITORY\", \"forceString\": true}
+                  ]
+                }
+              }
+            }
+          }"
+          echo "Deployed $APP_NAME with image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
   verify-deployment:
     needs: docker-build-push
     runs-on: self-hosted
