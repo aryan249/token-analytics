@@ -1,6 +1,6 @@
 image:
   repository: 207270671706.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
-  tag: "6a81042cc45950a26b32fba4585a06da2ccf2ff1"
+  tag: "921fe73d7903a450ce8174b015d1a3ded04e208e"
   pullPolicy: Always
 
 namespace: token-analytics
