@@ -121,38 +121,23 @@ jobs:
             --set installCRDs=true \
             --wait --timeout 5m
 
-      - name: Install monitoring stack (Prometheus + Grafana + Loki)
+      - name: Install monitoring stack (umbrella chart)
         run: |
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
-          helm repo add grafana https://grafana.github.io/helm-charts || true
+          # Clean up old individual releases if present
+          helm uninstall prometheus grafana loki promtail -n monitoring 2>/dev/null || true
+
+          # Build umbrella chart dependencies
+          cd helm/observability
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
+          helm repo add grafana https://grafana.github.io/helm-charts 2>/dev/null || true
           helm repo update
+          helm dependency build
+          cd ../..
 
-          # Clean up any failed releases
-          helm uninstall prometheus -n monitoring 2>/dev/null || true
-
-          # Lightweight Prometheus (no operator, no CRDs)
-          helm upgrade --install prometheus prometheus-community/prometheus \
+          # Single install for entire observability stack
+          helm upgrade --install observability helm/observability \
             --namespace monitoring --create-namespace \
-            -f helm/observability/prometheus-values.yaml \
-            --timeout 10m || echo "WARNING: Prometheus install timed out — will retry next deploy"
-
-          # Grafana
-          helm upgrade --install grafana grafana/grafana \
-            --namespace monitoring \
-            -f helm/observability/grafana-values.yaml \
-            --timeout 10m || echo "WARNING: Grafana install timed out"
-
-          # Loki (single-binary log aggregation)
-          helm upgrade --install loki grafana/loki \
-            --namespace monitoring \
-            -f helm/observability/loki-values.yaml \
-            --timeout 10m || echo "WARNING: Loki install timed out"
-
-          # Promtail (ships logs to Loki)
-          helm upgrade --install promtail grafana/promtail \
-            --namespace monitoring \
-            -f helm/observability/promtail-values.yaml \
-            --timeout 5m || echo "WARNING: Promtail install timed out"
+            --timeout 10m || echo "WARNING: Monitoring install timed out — will retry next deploy"
 
       - name: Deploy with Helm
         run: |

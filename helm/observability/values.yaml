@@ -1,0 +1,257 @@
+# ── Observability Stack — Single Values File ────────────────────────────────
+#
+# Install:
+#   cd helm/observability
+#   helm dependency build
+#   helm upgrade --install observability . -n monitoring --create-namespace
+#
+# All 4 charts configured here under their dependency name as key.
+
+# ── Prometheus ───────────────────────────────────────────────────────────────
+
+prometheus:
+  server:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        cpu: 250m
+        memory: 512Mi
+    retention: 3d
+    persistentVolume:
+      enabled: false
+    global:
+      scrape_interval: 30s
+      evaluation_interval: 30s
+  extraScrapeConfigs: |
+    - job_name: token-analytics-api
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names: [token-analytics]
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          regex: api
+          action: keep
+      metrics_path: /metrics
+      scrape_interval: 15s
+  serverFiles:
+    alerting_rules.yml:
+      groups:
+        - name: token-analytics
+          rules:
+            - alert: HighErrorRate
+              expr: rate(errors_total[5m]) > 0.1
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "Error rate above 0.1/sec"
+            - alert: DeadLetterQueueGrowing
+              expr: increase(dead_letter_total[1h]) > 0
+              labels:
+                severity: critical
+              annotations:
+                summary: "Events sent to dead-letter queue"
+            - alert: HighAPILatency
+              expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+              for: 5m
+              labels:
+                severity: warning
+              annotations:
+                summary: "API P95 latency above 2s"
+            - alert: HealthCheckDown
+              expr: up{job="token-analytics-api"} == 0
+              for: 2m
+              labels:
+                severity: critical
+              annotations:
+                summary: "API health check failing"
+  alertmanager:
+    enabled: false
+  pushgateway:
+    enabled: false
+  kube-state-metrics:
+    enabled: false
+  configmapReload:
+    prometheus:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 25m
+          memory: 32Mi
+  nodeExporter:
+    enabled: false
+
+# ── Grafana ──────────────────────────────────────────────────────────────────
+
+grafana:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  adminPassword: "token-analytics-grafana"
+  persistence:
+    enabled: false
+  service:
+    type: ClusterIP
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          url: http://observability-prometheus-server:80
+          access: proxy
+          isDefault: true
+        - name: Loki
+          type: loki
+          url: http://observability-loki:3100
+          access: proxy
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: token-analytics
+          orgId: 1
+          folder: Token Analytics
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/token-analytics
+  dashboards:
+    token-analytics:
+      overview:
+        json: |
+          {
+            "title": "Token Analytics — Overview",
+            "uid": "token-analytics-overview",
+            "time": {"from": "now-1h", "to": "now"},
+            "refresh": "30s",
+            "panels": [
+              {
+                "title": "Events Processed / sec",
+                "type": "timeseries",
+                "datasource": "Prometheus",
+                "targets": [{"expr": "rate(events_processed_total[5m])", "legendFormat": "{{processor}} — {{status}}"}],
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+              },
+              {
+                "title": "Event Processing Latency (P95)",
+                "type": "timeseries",
+                "datasource": "Prometheus",
+                "targets": [{"expr": "histogram_quantile(0.95, rate(event_processing_duration_seconds_bucket[5m]))", "legendFormat": "{{processor}}"}],
+                "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+              },
+              {
+                "title": "HTTP Request Duration (P95)",
+                "type": "timeseries",
+                "datasource": "Prometheus",
+                "targets": [{"expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))", "legendFormat": "{{method}} {{route}}"}],
+                "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+              },
+              {
+                "title": "HTTP Requests / sec",
+                "type": "timeseries",
+                "datasource": "Prometheus",
+                "targets": [{"expr": "rate(http_requests_total[5m])", "legendFormat": "{{method}} {{route}} {{status_code}}"}],
+                "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+              },
+              {
+                "title": "Cache Hit Rate",
+                "type": "stat",
+                "datasource": "Prometheus",
+                "targets": [{"expr": "sum(rate(cache_hits_total[5m])) / (sum(rate(cache_hits_total[5m])) + sum(rate(cache_misses_total[5m])))"}],
+                "gridPos": {"h": 4, "w": 6, "x": 0, "y": 16}
+              },
+              {
+                "title": "WebSocket Clients",
+                "type": "stat",
+                "datasource": "Prometheus",
+                "targets": [{"expr": "ws_clients_connected"}],
+                "gridPos": {"h": 4, "w": 6, "x": 6, "y": 16}
+              },
+              {
+                "title": "Dead Letter Queue",
+                "type": "stat",
+                "datasource": "Prometheus",
+                "targets": [{"expr": "sum(dead_letter_total)"}],
+                "gridPos": {"h": 4, "w": 6, "x": 12, "y": 16}
+              },
+              {
+                "title": "Errors / sec",
+                "type": "timeseries",
+                "datasource": "Prometheus",
+                "targets": [{"expr": "rate(errors_total[5m])", "legendFormat": "{{source}} — {{type}}"}],
+                "gridPos": {"h": 4, "w": 6, "x": 18, "y": 16}
+              }
+            ]
+          }
+
+# ── Loki ─────────────────────────────────────────────────────────────────────
+
+loki:
+  loki:
+    auth_enabled: false
+    commonConfig:
+      replication_factor: 1
+      path_prefix: /var/loki
+    storage:
+      type: filesystem
+    limits_config:
+      retention_period: 72h
+      max_query_series: 500
+      ingestion_rate_mb: 4
+      ingestion_burst_size_mb: 6
+    compactor:
+      retention_enabled: true
+      working_directory: /var/loki/compactor
+    schemaConfig:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+  singleBinary:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+    persistence:
+      enabled: false
+  gateway:
+    enabled: false
+  read:
+    replicas: 0
+  write:
+    replicas: 0
+  backend:
+    replicas: 0
+
+# ── Promtail ─────────────────────────────────────────────────────────────────
+
+promtail:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  config:
+    clients:
+      - url: http://observability-loki:3100/loki/api/v1/push
