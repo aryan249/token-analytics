@@ -88,6 +88,11 @@ variable "runner_instance_type" {
   default = "t3.small"
 }
 
+variable "runner_volume_size" {
+  type    = number
+  default = 30
+}
+
 variable "github_repo" {
   type    = string
   default = "aryan249/token-analytics"
@@ -107,4 +112,40 @@ variable "alchemy_ws_url" {
 variable "jwt_secret" {
   type      = string
   sensitive = true
+}
+
+# ── ECR ──────────────────────────────────────────────────────────────────────
+
+variable "ecr_tag_mutability" {
+  type    = string
+  default = "IMMUTABLE"
+}
+
+variable "ecr_retention_days" {
+  description = "Expire images not pushed within this many days"
+  type        = number
+  default     = 30
+}
+
+variable "ecr_keep_images" {
+  description = "Description label for lifecycle policy"
+  type        = number
+  default     = 10
+}
+
+# ── RDS Extra ────────────────────────────────────────────────────────────────
+
+variable "rds_backup_retention" {
+  type    = number
+  default = 7
+}
+
+variable "rds_storage_size" {
+  type    = number
+  default = 20
+}
+
+variable "rds_max_storage" {
+  type    = number
+  default = 50
 }

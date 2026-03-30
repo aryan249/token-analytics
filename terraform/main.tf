@@ -8,6 +8,8 @@ terraform {
     }
   }
 
+  # Backend config cannot use variables — values are hardcoded here.
+  # To change, update and run: terraform init -reconfigure
   backend "s3" {
     bucket         = "token-analytics-tfstate"
     key            = "infra/terraform.tfstate"
