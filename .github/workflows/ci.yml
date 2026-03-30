@@ -6,7 +6,6 @@ on:
   pull_request:
     branches: [main, staging]
 
-# ── All configurable values in one place ─────────────────────────────────────
 env:
   AWS_REGION: ap-south-1
   AWS_ACCOUNT_ID: "207270671706"
@@ -84,58 +83,46 @@ jobs:
           exit-code: 0
           scanners: vuln
 
-      - name: Verify image in ECR
+      - name: Print image tag for PR
         run: |
-          aws ecr describe-images \
-            --repository-name $ECR_REPOSITORY \
-            --image-ids imageTag=$IMAGE_TAG \
-            --region $AWS_REGION \
-            --query 'imageDetails[0].{Tag:imageTags[0],Pushed:imagePushedAt,Size:imageSizeInBytes}' \
-            --output table
+          echo "## Image Built" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** \`$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To deploy, update \`helm/token-analytics/values.yaml\`:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
+          echo "image:" >> $GITHUB_STEP_SUMMARY
+          echo "  tag: \"$IMAGE_TAG\"" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "Then merge to main (production) or staging." >> $GITHUB_STEP_SUMMARY
 
-      - name: Deploy this exact image via Argo CD
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'
-        run: |
-          # Only deploy from main/staging — feature branches just build + test
-          APP_NAME="token-analytics-production"
-          if [ "${{ github.ref }}" = "refs/heads/staging" ]; then
-            APP_NAME="token-analytics-staging"
-          fi
-
-          aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
-          kubectl patch application $APP_NAME -n argocd --type merge -p "{
-            \"spec\": {
-              \"source\": {
-                \"helm\": {
-                  \"parameters\": [
-                    {\"name\": \"image.tag\", \"value\": \"$IMAGE_TAG\", \"forceString\": true},
-                    {\"name\": \"image.repository\", \"value\": \"$ECR_REGISTRY/$ECR_REPOSITORY\", \"forceString\": true}
-                  ]
-                }
-              }
-            }
-          }"
-          echo "Deployed $APP_NAME with image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+  # ── Deployment Flow ────────────────────────────────────────────────────────
+  #
+  # 1. Dev pushes to feature branch → CI builds + pushes image to ECR
+  # 2. Dev creates PR to main/staging → includes values.yaml with new tag
+  # 3. Reviewer verifies tag matches CI build
+  # 4. PR merged → Argo CD detects git change → deploys that exact image
+  #
+  # Runner has ZERO write access to the cluster.
+  # Only Argo CD (in-cluster) can deploy — and only from trusted git repo.
+  #
+  # To deploy:
+  #   1. Copy image tag from CI output
+  #   2. Update helm/token-analytics/values.yaml → image.tag
+  #   3. Commit + push to your branch
+  #   4. Create PR → merge to main
+  #   5. Argo CD auto-syncs within 3 minutes
 
   verify-deployment:
     needs: docker-build-push
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4.1.7
 
-      - name: Configure kubectl
+      - name: Configure kubectl (read-only)
         run: aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
-
-      - name: Wait for Image Updater (up to 5 min)
-        run: |
-          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          echo "Waiting for Argo CD Image Updater to detect: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          for i in $(seq 1 30); do
-            CURRENT=$(kubectl get pods -n $NAMESPACE -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || echo "unknown")
-            echo "Attempt $i/30 — $CURRENT"
-            echo "$CURRENT" | grep -q "$IMAGE_TAG" && echo "NEW IMAGE DEPLOYED" && break
-            sleep 10
-          done
 
       - name: Verify deployment
         run: ./scripts/verify-deployment.sh "$IMAGE_TAG"
