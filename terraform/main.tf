@@ -17,6 +17,16 @@ terraform {
   }
 }
 
+# Outputs consumed by terraform/platform/ for Argo CD + ESO install
+output "eks_endpoint" {
+  value = aws_eks_cluster.main.endpoint
+}
+
+output "eks_ca_data" {
+  value     = aws_eks_cluster.main.certificate_authority[0].data
+  sensitive = true
+}
+
 provider "aws" {
   region = var.aws_region
 
