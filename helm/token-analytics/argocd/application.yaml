@@ -1,11 +1,11 @@
-# ── Argo CD Project — isolation boundary for token-analytics ─────────────────
+# ── Argo CD Project ──────────────────────────────────────────────────────────
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: token-analytics
   namespace: argocd
 spec:
-  description: Token Analytics platform — staging and production environments
+  description: Token Analytics platform
   sourceRepos:
     - https://github.com/aryan249/token-analytics.git
   destinations:
@@ -22,89 +22,92 @@ spec:
     - group: "*"
       kind: "*"
 ---
-# ── ApplicationSet — generates one Argo CD Application per environment ───────
-#
-# How it works:
-#   - list generator defines two environments: staging + production
-#   - Each gets its own namespace, branch, values file, and sync policy
-#   - Staging: auto-syncs from feat/devops (fast iteration)
-#   - Production: auto-syncs from main (only promoted code)
-#
-# Promotion workflow:
-#   1. Developer pushes to feat/devops → CI builds image → updates values.yaml tag
-#   2. Argo CD detects git change → syncs staging automatically
-#   3. QA verifies staging
-#   4. Developer merges feat/devops → main (PR)
-#   5. Argo CD detects main change → syncs production automatically
-#
-# Drift detection:
-#   selfHeal: true — if someone kubectl edits a deployment, Argo reverts it
-#   within 3 minutes (default sync interval)
-#
+# ── Production Application ───────────────────────────────────────────────────
 apiVersion: argoproj.io/v1alpha1
-kind: ApplicationSet
+kind: Application
 metadata:
-  name: token-analytics
+  name: token-analytics-production
   namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: token-analytics
+    environment: production
+  annotations:
+    # Image Updater watches ECR and auto-updates the image tag
+    argocd-image-updater.argoproj.io/image-list: app=207270671706.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
+    argocd-image-updater.argoproj.io/app.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
 spec:
-  generators:
-    - list:
-        elements:
-          - env: staging
-            namespace: token-analytics-staging
-            branch: fix/review-fixes
-            valuesFile: values-staging.yaml
-          - env: production
-            namespace: token-analytics
-            branch: feat/argocd-gitops
-            valuesFile: values-production.yaml
-  template:
-    metadata:
-      name: "token-analytics-{{env}}"
-      namespace: argocd
-      labels:
-        app.kubernetes.io/part-of: token-analytics
-        environment: "{{env}}"
-      annotations:
-        # Argo CD Image Updater — watches ECR for new tags, auto-deploys
-        argocd-image-updater.argoproj.io/image-list: app=207270671706.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
-        argocd-image-updater.argoproj.io/app.update-strategy: latest
-        argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
-        argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
-    spec:
-      project: token-analytics
-      source:
-        repoURL: https://github.com/aryan249/token-analytics.git
-        targetRevision: "{{branch}}"
-        path: helm/token-analytics
-        helm:
-          valueFiles:
-            - values.yaml
-            - "{{valuesFile}}"
-      destination:
-        server: https://kubernetes.default.svc
-        namespace: "{{namespace}}"
-      syncPolicy:
-        automated:
-          prune: true       # Delete resources removed from git
-          selfHeal: true    # Revert manual kubectl changes
-        syncOptions:
-          - CreateNamespace=true
-          - PrunePropagationPolicy=foreground
-          - ServerSideApply=true
-        retry:
-          limit: 3
-          backoff:
-            duration: 30s
-            factor: 2
-            maxDuration: 3m
-      # Ignore differences that K8s controllers set automatically
-      ignoreDifferences:
-        - group: apps
-          kind: Deployment
-          jsonPointers:
-            - /spec/replicas  # HPA manages this
-        - group: autoscaling
-          kind: HorizontalPodAutoscaler
-          jsonPointers:
-            - /spec/metrics
+  project: token-analytics
+  source:
+    repoURL: https://github.com/aryan249/token-analytics.git
+    targetRevision: feat/argocd-gitops
+    path: helm/token-analytics
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-production.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: token-analytics
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 3m
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+---
+# ── Staging Application ──────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: token-analytics-staging
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: token-analytics
+    environment: staging
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: app=207270671706.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
+    argocd-image-updater.argoproj.io/app.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  project: token-analytics
+  source:
+    repoURL: https://github.com/aryan249/token-analytics.git
+    targetRevision: fix/review-fixes
+    path: helm/token-analytics
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-staging.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: token-analytics-staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 3m

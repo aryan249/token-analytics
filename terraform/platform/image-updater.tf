@@ -18,7 +18,7 @@ resource "helm_release" "argocd_image_updater" {
   version    = "0.11.0"
   namespace  = kubernetes_namespace.argocd.metadata[0].name
 
-  # ECR registry configuration
+  # ECR authentication — use AWS credential helper (node IAM role)
   set {
     name  = "config.registries[0].name"
     value = "ecr"
@@ -35,8 +35,12 @@ resource "helm_release" "argocd_image_updater" {
     name  = "config.registries[0].default"
     value = "true"
   }
+  set {
+    name  = "config.registries[0].credentials"
+    value = "pullsecret:argocd/ecr-credentials"
+  }
 
-  # Check interval
+  # Argo CD connection
   set {
     name  = "config.argocd.plaintext"
     value = "true"
