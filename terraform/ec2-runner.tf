@@ -12,8 +12,8 @@ resource "aws_security_group" "runner" {
   }
 
   ingress {
-    from_port   = 22
-    to_port     = 22
+    from_port   = var.ssh_port
+    to_port     = var.ssh_port
     protocol    = "tcp"
     cidr_blocks = [var.runner_ssh_cidr]
     description = "SSH"

@@ -121,14 +121,8 @@ variable "ecr_tag_mutability" {
   default = "IMMUTABLE"
 }
 
-variable "ecr_retention_days" {
-  description = "Expire images not pushed within this many days"
-  type        = number
-  default     = 30
-}
-
 variable "ecr_keep_images" {
-  description = "Description label for lifecycle policy"
+  description = "Number of most recent images to keep in ECR (older ones expire)"
   type        = number
   default     = 10
 }
@@ -206,4 +200,30 @@ variable "runner_ssh_cidr" {
 variable "runner_disk_alert_threshold" {
   type    = number
   default = 85
+}
+
+# ── Ports & Protocols (AWS/K8s standards — rarely changed) ───────────────────
+
+variable "eks_api_port" {
+  description = "Kubernetes API server port (standard: 443)"
+  type        = number
+  default     = 443
+}
+
+variable "redis_port" {
+  description = "Redis port (standard: 6379)"
+  type        = number
+  default     = 6379
+}
+
+variable "postgres_port" {
+  description = "PostgreSQL port (standard: 5432)"
+  type        = number
+  default     = 5432
+}
+
+variable "ssh_port" {
+  description = "SSH port (standard: 22)"
+  type        = number
+  default     = 22
 }

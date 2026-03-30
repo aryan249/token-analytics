@@ -16,14 +16,12 @@ resource "aws_ecr_lifecycle_policy" "cleanup" {
   policy = jsonencode({
     rules = [
       {
-        # Keep images that are currently deployed (pulled recently)
         rulePriority = 1
-        description  = "Keep last ${var.ecr_keep_images} recently pulled images"
+        description  = "Keep last ${var.ecr_keep_images} images, expire the rest"
         selection = {
           tagStatus   = "any"
-          countType   = "sinceImagePushed"
-          countUnit   = "days"
-          countNumber = var.ecr_retention_days
+          countType   = "imageCountMoreThan"
+          countNumber = var.ecr_keep_images
         }
         action = { type = "expire" }
       }

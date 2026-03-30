@@ -12,8 +12,8 @@ resource "aws_security_group" "redis" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    from_port       = 6379
-    to_port         = 6379
+    from_port       = var.redis_port
+    to_port         = var.redis_port
     protocol        = "tcp"
     security_groups = [aws_security_group.eks_cluster.id]
     description     = "Redis from EKS"
@@ -64,7 +64,7 @@ resource "aws_elasticache_cluster" "redis" {
   engine_version  = var.redis_engine_version
   node_type       = var.redis_node_type
   num_cache_nodes = 1
-  port            = 6379
+  port            = var.redis_port
 
   parameter_group_name = aws_elasticache_parameter_group.redis.name
   subnet_group_name    = aws_elasticache_subnet_group.main.name
