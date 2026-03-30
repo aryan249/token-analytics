@@ -19,7 +19,6 @@ on:
         options:
           - plan
           - apply
-          - destroy
 
 env:
   AWS_REGION: ap-south-1
@@ -93,9 +92,3 @@ jobs:
           TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
           TF_VAR_github_runner_token: ${{ secrets.RUNNER_TOKEN }}
 
-      - name: Terraform Destroy
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
-        run: terraform destroy -auto-approve
-        env:
-          TF_VAR_rds_password: ${{ secrets.RDS_PASSWORD }}
-          TF_VAR_github_runner_token: ${{ secrets.RUNNER_TOKEN }}
