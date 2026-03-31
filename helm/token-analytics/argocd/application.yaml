@@ -1,0 +1,147 @@
+# ── Argo CD Project ──────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: token-analytics
+  namespace: argocd
+spec:
+  description: Token Analytics platform
+  sourceRepos:
+    - https://github.com/aryan249/token-analytics.git
+  destinations:
+    - namespace: token-analytics
+      server: https://kubernetes.default.svc
+    - namespace: token-analytics-staging
+      server: https://kubernetes.default.svc
+    - namespace: monitoring
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+# ── Production Application ───────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: token-analytics-production
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: token-analytics
+    environment: production
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: app=692046684301.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
+    argocd-image-updater.argoproj.io/app.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/app.allow-tags: "regexp:^prod-"
+    argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  project: token-analytics
+  source:
+    repoURL: https://github.com/aryan249/token-analytics.git
+    targetRevision: feat/argocd-gitops
+    path: helm/token-analytics
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-production.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: token-analytics
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 3m
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+---
+# ── Staging Application ──────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: token-analytics-staging
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: token-analytics
+    environment: staging
+  annotations:
+    argocd-image-updater.argoproj.io/image-list: app=692046684301.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
+    argocd-image-updater.argoproj.io/app.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/app.allow-tags: "regexp:^staging-"
+    argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  project: token-analytics
+  source:
+    repoURL: https://github.com/aryan249/token-analytics.git
+    targetRevision: feat/indexer-pipeline
+    path: helm/token-analytics
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-staging.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: token-analytics-staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 3m
+---
+# ── Observability Application (Prometheus + Grafana + Loki + Promtail) ───────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: token-analytics
+spec:
+  project: token-analytics
+  source:
+    repoURL: https://github.com/aryan249/token-analytics.git
+    targetRevision: feat/argocd-gitops
+    path: helm/observability
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

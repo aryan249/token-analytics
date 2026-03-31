@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: api
+    {{- include "token-analytics.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: {{ .Values.podDefaults.rollingUpdate.maxSurge }}
+      maxUnavailable: {{ .Values.podDefaults.rollingUpdate.maxUnavailable }}
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      securityContext:
+        {{- toYaml .Values.podDefaults.securityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.podDefaults.terminationGracePeriodSeconds }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: api
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: api
+      containers:
+        - name: api
+          image: {{ include "token-analytics.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.podDefaults.containerSecurity | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: {{ .Values.podDefaults.tmpMountPath }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ .Values.podDefaults.preStopSleepSeconds }}"]
+          command: ["node", "dist/api/server.js"]
+          ports:
+            - containerPort: {{ .Values.api.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ .Chart.Name }}-config
+            - secretRef:
+                name: {{ .Chart.Name }}-secrets
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.podDefaults.healthPath }}
+              port: {{ .Values.api.port }}
+            {{- toYaml .Values.probes.api.startup | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.podDefaults.healthPath }}
+              port: {{ .Values.api.port }}
+            {{- toYaml .Values.probes.api.readiness | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.podDefaults.healthPath }}
+              port: {{ .Values.api.port }}
+            {{- toYaml .Values.probes.api.liveness | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      restartPolicy: Always

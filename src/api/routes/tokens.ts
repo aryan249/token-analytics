@@ -1,0 +1,396 @@
+import type { FastifyPluginAsync } from "fastify";
+import type { Pool } from "pg";
+import { KEYS, getEthUsdRate, type RedisClient } from "../../clients/redis";
+import { withCache } from "../cache";
+import {
+  getTokenList, getTokenDetail, getTokenTrades, updateTokenMetadata,
+  type TokenListRow, type TokenDetailRow,
+} from "../../utils/db/tokens";
+import { getTokenHolders }  from "../../utils/db/holders";
+import { ethPriceToUsd, formatUsd, weiToEth } from "../../utils/math";
+import { RESOLUTIONS }      from "../../utils/constants";
+import { getTokenCandles }  from "../../utils/db/tokens";
+
+interface Opts { pool: Pool; redis: RedisClient; }
+
+// ── Sort options ──────────────────────────────────────────────────────────────
+
+const SORT_OPTIONS = new Set(["marketCap", "volume", "trades", "newest"] as const);
+type SortOption = "marketCap" | "volume" | "trades" | "newest";
+
+// ── Shared shape builders ─────────────────────────────────────────────────────
+
+
+interface HourDataPoint {
+  periodStartUnix: number;
+  volumeETH:       string;
+  volumeUSD:       string | null;
+  openPriceETH:    string | null;
+  closePriceETH:   string | null;
+}
+
+interface TrendingToken {
+  tokenAddress:                   string;
+  image:                          string;
+  symbol:                         string | null;
+  name:                           string | null;
+  priceETH:                       string | null;
+  priceUSD:                       string | null;
+  twentyFourHourChangePercentage: number | null;
+  twentyFourHourVolume:           string;
+  twentyFourHourVolumeUSD:        string | null;
+  tradeCount24h:                  number;
+  holderCount:                    number;
+  feesEarned:                     string;
+  feesEarnedUSD:                  string | null;
+  marketCapETH:                   string | null;
+  marketCapUSD:                   string | null;
+  discoveredAt:                   string;
+  royaltyMembers:                 Array<{ address: string; percentage: number }>;
+  hourData:                       HourDataPoint[];
+}
+
+function buildRoyaltyMembers(
+  members: Array<{ recipient: string; share: string }>,
+  creator: string,
+): Array<{ address: string; percentage: number }> {
+  if (!members.length) return [{ address: creator, percentage: 100 }];
+  const totalShares = members.reduce((s, m) => s + BigInt(m.share), 0n);
+  return members.map((m) => ({
+    address:    m.recipient,
+    percentage: totalShares > 0n
+      ? Number(BigInt(m.share) * 10000n / totalShares) / 100
+      : 0,
+  }));
+}
+
+function buildHourData(
+  hourData: TokenListRow["hourData"],
+  ethUsdRate: bigint | null,
+  currentPriceEth: string | null,
+): HourDataPoint[] {
+  const points = hourData.map((h) => ({
+    periodStartUnix: Number(h.periodStartUnix),
+    volumeETH:       weiToEth(h.volumeEth) ?? "0",
+    volumeUSD:       ethUsdRate
+      ? formatUsd(ethPriceToUsd(BigInt(h.volumeEth), ethUsdRate))
+      : null,
+    openPriceETH:    weiToEth(h.openPriceEth),
+    closePriceETH:   weiToEth(h.closePriceEth),
+  }));
+
+  // Append synthetic "now" entry so charts always extend to current moment
+  if (currentPriceEth) {
+    points.push({
+      periodStartUnix: Math.floor(Date.now() / 1000),
+      volumeETH:       "0",
+      volumeUSD:       "0",
+      openPriceETH:    weiToEth(currentPriceEth),
+      closePriceETH:   weiToEth(currentPriceEth),
+    });
+  }
+
+  return points;
+}
+
+function buildTrendingToken(r: TokenListRow, ethUsdRate: bigint | null): TrendingToken {
+  const priceEthWei = r.lastPriceEth;
+  const mcapEthWei  = r.mcapEth;
+
+  const priceETH  = weiToEth(priceEthWei);
+  const mcapETH   = weiToEth(mcapEthWei);
+  const vol24hETH = weiToEth(r.vol24hEth) ?? "0";
+  const feesETH   = weiToEth(r.feesEarnedEth) ?? "0";
+
+  const priceUSD  = priceEthWei && ethUsdRate
+    ? formatUsd(ethPriceToUsd(BigInt(priceEthWei), ethUsdRate)) : null;
+  const mcapUSD   = mcapEthWei && ethUsdRate
+    ? formatUsd(ethPriceToUsd(BigInt(mcapEthWei), ethUsdRate)) : null;
+  const vol24hUSD = ethUsdRate
+    ? formatUsd(ethPriceToUsd(BigInt(r.vol24hEth), ethUsdRate)) : null;
+  const feesUSD   = ethUsdRate
+    ? formatUsd(ethPriceToUsd(BigInt(r.feesEarnedEth), ethUsdRate)) : null;
+
+  let change24h: number | null = null;
+  if (priceEthWei && r.price24hOpenEth) {
+    try {
+      const current = Number(BigInt(priceEthWei));
+      const open    = Number(BigInt(r.price24hOpenEth));
+      if (open > 0) change24h = (current - open) / open * 100;
+    } catch { /* ignore */ }
+  }
+
+  return {
+    tokenAddress:                   r.tokenAddress,
+    image:                          `https://i.flaunch.gg/token/${r.tokenAddress}`,
+    symbol:                         r.symbol,
+    name:                           r.name,
+    priceETH,
+    priceUSD,
+    twentyFourHourChangePercentage: change24h,
+    twentyFourHourVolume:           vol24hETH,
+    twentyFourHourVolumeUSD:        vol24hUSD,
+    tradeCount24h:                  r.tradeCount24h,
+    holderCount:                    r.holderCount,
+    feesEarned:                     feesETH,
+    feesEarnedUSD:                  feesUSD,
+    marketCapETH:                   mcapETH,
+    marketCapUSD:                   mcapUSD,
+    discoveredAt:                   r.discoveredAt,
+    royaltyMembers:                 buildRoyaltyMembers(r.royaltyMembers, r.creator),
+    hourData:                       buildHourData(r.hourData, ethUsdRate, priceEthWei),
+  };
+}
+
+function sortTokens(tokens: TrendingToken[], sort: SortOption): TrendingToken[] {
+  const sorted = [...tokens];
+  switch (sort) {
+    case "marketCap":
+      // Trending = weighted score: volume (40%) + trades (30%) + mcap (20%) + fees (10%)
+      // Tokens with activity rank higher than dead tokens with high mcap
+      return sorted.sort((a, b) => {
+        const scoreA =
+          parseFloat(a.twentyFourHourVolume) * 0.4 +
+          a.tradeCount24h * 1000 * 0.3 +
+          parseFloat(a.marketCapETH ?? "0") * 0.2 +
+          parseFloat(a.feesEarned) * 10000 * 0.1;
+        const scoreB =
+          parseFloat(b.twentyFourHourVolume) * 0.4 +
+          b.tradeCount24h * 1000 * 0.3 +
+          parseFloat(b.marketCapETH ?? "0") * 0.2 +
+          parseFloat(b.feesEarned) * 10000 * 0.1;
+        return scoreB - scoreA;
+      });
+    case "volume":
+      return sorted.sort((a, b) =>
+        parseFloat(b.twentyFourHourVolume) - parseFloat(a.twentyFourHourVolume)
+      );
+    case "trades":
+      return sorted.sort((a, b) => b.tradeCount24h - a.tradeCount24h);
+    case "newest":
+      return sorted.sort((a, b) => new Date(b.discoveredAt).getTime() - new Date(a.discoveredAt).getTime());
+  }
+}
+
+// ── Routes ────────────────────────────────────────────────────────────────────
+
+export const tokenRoutes: FastifyPluginAsync<Opts> = async (app, opts) => {
+  const { pool, redis } = opts;
+
+  // ── GET /tokens ─────────────────────────────────────────────────────────────
+  app.get<{ Querystring: { sort?: string; limit?: string; offset?: string } }>(
+    "/",
+    async (req, reply) => {
+      const sortParam = req.query.sort ?? "marketCap";
+      if (!SORT_OPTIONS.has(sortParam as SortOption)) {
+        return reply.status(400).send({ error: `sort must be one of: ${[...SORT_OPTIONS].join(", ")}` });
+      }
+      const sort   = sortParam as SortOption;
+      const limit  = Math.min(Number(req.query.limit  ?? 50) || 50, 200);
+      const offset = Math.max(Number(req.query.offset ?? 0)  || 0,  0);
+
+      // Cache pre-sorted lists by sort option — avoids O(n log n) sort on every request
+      const cacheKey = `${KEYS.apiTokenList()}:${sort}`;
+      const data = await withCache(redis, cacheKey, 5, async () => {
+        // Fetch once, build all sort variants (shared DB query, different sort orders)
+        const allKey = `${KEYS.apiTokenList()}:all`;
+        let all: TrendingToken[];
+        const cachedAll = await redis.get(allKey);
+        if (cachedAll) {
+          all = JSON.parse(cachedAll);
+        } else {
+          const [rows, ethUsdRate] = await Promise.all([
+            getTokenList(pool),
+            getEthUsdRate(redis),
+          ]);
+          all = rows.map((r) => buildTrendingToken(r, ethUsdRate));
+          await redis.setEx(allKey, 5, JSON.stringify(all));
+        }
+        return sortTokens(all, sort);
+      });
+
+      return reply.send(data.slice(offset, offset + limit));
+    },
+  );
+
+  // ── GET /tokens/:address ─────────────────────────────────────────────────────
+  app.get<{ Params: { address: string } }>(
+    "/:address",
+    async (req, reply) => {
+      const address = req.params.address.toLowerCase();
+
+      const data = await withCache(redis, KEYS.apiTokenDetail(address), 5, async () => {
+        const [row, ethUsdRate] = await Promise.all([
+          getTokenDetail(pool, address),
+          getEthUsdRate(redis),
+        ]);
+        if (!row) return null;
+
+        const base  = buildTrendingToken(row as TokenListRow, ethUsdRate);
+        const detail = row as TokenDetailRow;
+
+        return {
+          ...base,
+          description: detail.description,
+          website:     detail.website,
+          twitter:     detail.twitter,
+          telegram:    detail.telegram,
+          poolId:    detail.poolId,
+          pmAddress: detail.pmAddress,
+          fairLaunch: detail.fairLaunchEndsAt ? {
+            endsAt:   detail.fairLaunchEndsAt,
+            endedAt:  detail.fairLaunchEndedAt,
+            revenue:  detail.fairLaunchRevenue,
+            supply:   detail.fairLaunchSupply,
+            revenueUSD: detail.fairLaunchRevenue && ethUsdRate
+              ? formatUsd(ethPriceToUsd(BigInt(detail.fairLaunchRevenue), ethUsdRate)) : null,
+          } : null,
+        };
+      });
+
+      if (!data) return reply.status(404).send({ error: "Token not found" });
+      return reply.send(data);
+    },
+  );
+
+  // ── GET /tokens/:address/candles ─────────────────────────────────────────────
+  app.get<{
+    Params:      { address: string };
+    Querystring: { resolution?: string; from?: string; to?: string; limit?: string };
+  }>(
+    "/:address/candles",
+    async (req, reply) => {
+      const address    = req.params.address.toLowerCase();
+      const resolution = req.query.resolution ?? "1h";
+
+      if (!RESOLUTIONS.has(resolution)) {
+        return reply.status(400).send({ error: `resolution must be one of: ${[...RESOLUTIONS].join(", ")}` });
+      }
+
+      let from: bigint | undefined;
+      let to:   bigint | undefined;
+      if (req.query.from || req.query.to) {
+        try {
+          if (req.query.from) from = BigInt(req.query.from);
+          if (req.query.to)   to   = BigInt(req.query.to);
+        } catch {
+          return reply.status(400).send({ error: "from and to must be valid unix timestamps" });
+        }
+      }
+
+      const limit = req.query.limit ? parseInt(req.query.limit, 10) : undefined;
+      if (limit != null && (isNaN(limit) || limit < 1)) {
+        return reply.status(400).send({ error: "limit must be a positive integer" });
+      }
+
+      const cacheKey = KEYS.apiCandles(address, resolution)
+        + (from ? `:${from}` : "") + (to ? `:${to}` : "") + (limit ? `:${limit}` : "");
+
+      const ethUsdRate = await getEthUsdRate(redis);
+      const all = await withCache(redis, cacheKey, 10, () =>
+        getTokenCandles(pool, address, resolution, from, to, limit)
+      );
+
+      // Enrich with USD prices
+      const enriched = all.map((c) => ({
+        ...c,
+        openUSD:  ethUsdRate ? formatUsd(ethPriceToUsd(BigInt(c.openEth),  ethUsdRate)) : null,
+        highUSD:  ethUsdRate ? formatUsd(ethPriceToUsd(BigInt(c.highEth),  ethUsdRate)) : null,
+        lowUSD:   ethUsdRate ? formatUsd(ethPriceToUsd(BigInt(c.lowEth),   ethUsdRate)) : null,
+        closeUSD: ethUsdRate ? formatUsd(ethPriceToUsd(BigInt(c.closeEth), ethUsdRate)) : null,
+        volumeUSD: ethUsdRate ? formatUsd(ethPriceToUsd(BigInt(c.volumeEth), ethUsdRate)) : null,
+      }));
+
+      return reply.send(enriched);
+    },
+  );
+
+  // ── GET /tokens/:address/trades ──────────────────────────────────────────────
+  app.get<{
+    Params:      { address: string };
+    Querystring: { limit?: string; offset?: string };
+  }>(
+    "/:address/trades",
+    async (req, reply) => {
+      const address = req.params.address.toLowerCase();
+      const limit   = Math.min(Number(req.query.limit  ?? 50), 200);
+      const offset  = Math.max(Number(req.query.offset ?? 0),  0);
+
+      const [result, ethUsdRate] = await Promise.all([
+        getTokenTrades(pool, address, limit, offset),
+        getEthUsdRate(redis),
+      ]);
+
+      const trades = result.trades.map((t) => ({
+        ...t,
+        amountETH: weiToEth(t.amountETH) ?? t.amountETH,
+        priceETH:  weiToEth(t.priceETH)  ?? t.priceETH,
+        feeETH:    weiToEth(t.feeETH),
+        amountUSD: ethUsdRate && t.amountETH
+          ? formatUsd(ethPriceToUsd(BigInt(t.amountETH), ethUsdRate)) : null,
+        priceUSD: ethUsdRate && t.priceETH
+          ? formatUsd(ethPriceToUsd(BigInt(t.priceETH), ethUsdRate)) : null,
+      }));
+
+      return reply.send({ trades, total: result.total, limit, offset });
+    },
+  );
+
+  // ── PATCH /tokens/:address/metadata ──────────────────────────────────────────
+  app.patch<{
+    Params: { address: string };
+    Body:   { description?: string; website?: string; twitter?: string; telegram?: string };
+  }>(
+    "/:address/metadata",
+    async (req, reply) => {
+      const address = req.params.address.toLowerCase();
+      const { description, website, twitter, telegram } = req.body ?? {};
+
+      // Wallet is set by jwtAuthHook from the verified JWT — never trust request body
+      const wallet = (req as any).wallet;
+      if (!wallet) return reply.status(401).send({ error: "Authentication required" });
+
+      // Verify the authenticated wallet is the token's creator
+      const row = await pool.query<{ creator: string }>(
+        "SELECT creator FROM token_registry WHERE token_address = $1 LIMIT 1",
+        [address],
+      );
+      if (!row.rows.length) return reply.status(404).send({ error: "Token not found" });
+      if (row.rows[0].creator.toLowerCase() !== wallet.toLowerCase()) {
+        return reply.status(403).send({ error: "Only the token creator can update metadata" });
+      }
+
+      await updateTokenMetadata(pool, address, { description, website, twitter, telegram });
+
+      // Bust cache so next fetch reflects the update
+      await redis.del(KEYS.apiTokenDetail(address));
+      await redis.del(KEYS.apiTokenList());
+
+      return reply.status(204).send();
+    },
+  );
+
+  // ── GET /tokens/:address/holders ─────────────────────────────────────────────
+  app.get<{
+    Params:      { address: string };
+    Querystring: { limit?: string; offset?: string };
+  }>(
+    "/:address/holders",
+    async (req, reply) => {
+      const address = req.params.address.toLowerCase();
+      const limit   = Math.min(Number(req.query.limit  ?? 50), 200);
+      const offset  = Math.max(Number(req.query.offset ?? 0),  0);
+
+      const [ethUsdRate, tokenRow] = await Promise.all([
+        getEthUsdRate(redis),
+        getTokenDetail(pool, address),
+      ]);
+
+      const priceEth   = tokenRow?.lastPriceEth  ? BigInt(tokenRow.lastPriceEth) : null;
+      const totalSupply = tokenRow?.totalSupply  ? BigInt(tokenRow.totalSupply)  : null;
+
+      const result = await getTokenHolders(pool, address, limit, offset, ethUsdRate, priceEth, totalSupply);
+      return reply.send({ holders: result.holders, total: result.total, limit, offset });
+    },
+  );
+};

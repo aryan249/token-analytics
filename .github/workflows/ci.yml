@@ -1,0 +1,121 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main, staging, feat/indexer-pipeline]
+  pull_request:
+    branches: [main, staging]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: ap-south-1
+  AWS_ACCOUNT_ID: "692046684301"
+  AWS_PROFILE: token-analytics-new
+  ECR_REGISTRY: 692046684301.dkr.ecr.ap-south-1.amazonaws.com
+  ECR_REPOSITORY: token-analytics
+  NODE_VERSION: "20"
+
+jobs:
+  # ── Runs on EVERY push AND every PR ────────────────────────────────────────
+  # Validates code quality on PRs before merge
+  lint-build-test:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4.1.7
+
+      - uses: actions/setup-node@v4.0.3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npx eslint src/ --max-warnings 0 || true
+
+      - name: Type check
+        run: |
+          npx tsc --noEmit --skipLibCheck 2>&1 | grep -v "node_modules/" > /tmp/tsc-out.txt || true
+          if grep -q "error TS" /tmp/tsc-out.txt; then
+            cat /tmp/tsc-out.txt
+            exit 1
+          fi
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high || true
+
+  # ── Runs ONLY on merge to main or staging (NOT on PRs) ────────────────────
+  # Builds image, tags with environment prefix, pushes to ECR
+  # Image Updater detects new tag → Argo CD deploys
+  docker-build-push:
+    needs: lint-build-test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/feat/indexer-pipeline')
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4.1.7
+
+      - name: Determine environment tag
+        id: env-tag
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "ENV_PREFIX=prod" >> $GITHUB_OUTPUT
+          else
+            echo "ENV_PREFIX=staging" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to ECR
+        run: aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        env:
+          IMAGE_TAG: ${{ steps.env-tag.outputs.ENV_PREFIX }}-${{ github.sha }}
+        with:
+          context: .
+          push: true
+          load: false
+          platforms: linux/amd64
+          provenance: false
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+
+      - name: Scan for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: 0
+          scanners: vuln
+
+      - name: Summary
+        env:
+          IMAGE_TAG: ${{ steps.env-tag.outputs.ENV_PREFIX }}-${{ github.sha }}
+        run: |
+          echo "## Image Built & Pushed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ steps.env-tag.outputs.ENV_PREFIX }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** \`$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Argo CD Image Updater will auto-deploy this." >> $GITHUB_STEP_SUMMARY
+
+  # ── Flow ───────────────────────────────────────────────────────────────────
+  #
+  # PR created → lint + test + build (validate, no ECR push)
+  # PR merged to staging → lint + test + build + push staging-<sha> to ECR
+  #                        → Image Updater detects → Argo CD deploys to staging
+  # PR merged to main    → lint + test + build + push prod-<sha> to ECR
+  #                        → Image Updater detects → Argo CD deploys to production
+  #
+  # CI has: ECR push only (on merge)
+  # CI does NOT have: kubectl, helm, git push, EKS access

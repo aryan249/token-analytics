@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: indexer
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: indexer
+    {{- include "token-analytics.labels" . | nindent 4 }}
+spec:
+  serviceName: indexer
+  replicas: {{ .Values.indexer.replicas }}
+  selector:
+    matchLabels:
+      app: indexer
+  template:
+    metadata:
+      labels:
+        app: indexer
+    spec:
+      securityContext:
+        {{- toYaml .Values.podDefaults.securityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 90
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: indexer
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: indexer
+          image: {{ include "token-analytics.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.podDefaults.containerSecurity | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: {{ .Values.podDefaults.tmpMountPath }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ .Values.podDefaults.preStopSleepSeconds }}"]
+          command: ["node", "dist/indexer/main.js"]
+          envFrom:
+            - configMapRef:
+                name: {{ .Chart.Name }}-config
+            - secretRef:
+                name: {{ .Chart.Name }}-secrets
+          resources:
+            {{- toYaml .Values.indexer.resources | nindent 12 }}
+          startupProbe:
+            exec:
+              command: ["node", "-e", "setTimeout(()=>process.exit(0),0)"]
+            {{- toYaml .Values.probes.indexer.startup | nindent 12 }}
+          readinessProbe:
+            exec:
+              command: ["node", "-e", "try{require('fs').accessSync('{{ .Values.podDefaults.tmpMountPath }}/indexer-ready');process.exit(0)}catch{process.exit(1)}"]
+            {{- toYaml .Values.probes.indexer.readiness | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["node", "-e", "try{const s=require('fs').statSync('{{ .Values.podDefaults.tmpMountPath }}/indexer-alive');process.exit(Date.now()-s.mtimeMs<{{ .Values.probes.indexer.stalenessMs }}?0:1)}catch{process.exit(1)}"]
+            {{- toYaml .Values.probes.indexer.liveness | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      restartPolicy: Always

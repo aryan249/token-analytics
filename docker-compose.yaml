@@ -1,0 +1,114 @@
+version: "3.9"
+
+x-common: &common
+  build: .
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  env_file: .env
+  environment:
+    POSTGRES_URL: postgresql://postgres:${POSTGRES_PASSWORD:-localdev}@postgres:5432/flaunch
+    REDIS_URL: redis://redis:6379
+    NODE_ENV: development
+  volumes:
+    - ./src:/app/src
+    - ./dist:/app/dist
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "3"
+
+services:
+
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: flaunch
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Indexer ─────────────────────────────────────────────────────────────────
+
+  indexer:
+    <<: *common
+    command: ["node", "dist/indexer/main.js"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── Processors ──────────────────────────────────────────────────────────────
+
+  processor-trade:
+    <<: *common
+    command: ["node", "dist/processors/trade.js"]
+
+  processor-token:
+    <<: *common
+    command: ["node", "dist/processors/token.js"]
+
+  processor-candle:
+    <<: *common
+    command: ["node", "dist/processors/candle.js"]
+
+  processor-position:
+    <<: *common
+    command: ["node", "dist/processors/position.js"]
+
+  processor-fees:
+    <<: *common
+    command: ["node", "dist/processors/fees.js"]
+
+  processor-price:
+    <<: *common
+    command: ["node", "dist/processors/price.js"]
+
+  # ── API + WebSocket ─────────────────────────────────────────────────────────
+
+  api:
+    <<: *common
+    command: ["node", "dist/api/server.js"]
+    environment:
+      POSTGRES_URL: postgresql://postgres:${POSTGRES_PASSWORD:-localdev}@postgres:5432/flaunch
+      REDIS_URL: redis://redis:6379
+      API_PORT: "3000"
+      NODE_ENV: development
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
+  redisdata:
+
+# Hot reload workflow:
+#   1. Run: npx tsc --watch     (in terminal 1 — compiles src/ → dist/ on save)
+#   2. Run: docker compose up   (in terminal 2 — mounts dist/ into containers)
+#   3. Edit src/ → tsc recompiles → containers see new dist/ → restart with: docker compose restart <service>

@@ -1,0 +1,78 @@
+# ── Staging environment overrides ────────────────────────────────────────────
+# Inherits everything from values.yaml, overrides only what differs.
+
+namespace: token-analytics-staging
+
+indexer:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 250m, memory: 256Mi }
+  env:
+    CHAIN_ID: "8453"
+    BATCH_SIZE: "50"
+    LOG_LEVEL: "debug"
+
+processors:
+  trade:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 250m, memory: 256Mi }
+  token:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 250m, memory: 256Mi }
+  candle:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 250m, memory: 256Mi }
+  position:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 250m, memory: 256Mi }
+  fees:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 250m, memory: 256Mi }
+  price:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits:   { cpu: 100m, memory: 128Mi }
+
+api:
+  replicas: 1
+  port: 3000
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 250m, memory: 256Mi }
+  env:
+    API_PORT: "3000"
+    LOG_LEVEL: "debug"
+    NODE_ENV: "staging"
+  hpa:
+    enabled: false  # No autoscaling in staging
+
+# Staging uses a separate secrets path
+externalSecrets:
+  region: ap-south-1
+  roleArn: "arn:aws:iam::692046684301:role/token-analytics-external-secrets-role"
+  secretName: "token-analytics/staging-secrets"
+
+ingress:
+  enabled: true
+  className: alb
+  host: ""
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/stickiness-enabled: "true"
+    alb.ingress.kubernetes.io/stickiness-type: "app_cookie"
+    # Tag staging ALB for identification
+    alb.ingress.kubernetes.io/tags: "Environment=staging"

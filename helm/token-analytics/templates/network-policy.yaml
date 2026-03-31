@@ -1,0 +1,73 @@
+# Only API pods can receive ingress traffic — restricted to kube-system (ALB controller)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Allow from ALB ingress controller (kube-system namespace)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        # Allow from same namespace (inter-pod health checks)
+        - podSelector: {}
+      ports:
+        - port: {{ .Values.api.port }}
+          protocol: TCP
+---
+# Deny all ingress to processors and indexer (they only make outbound connections)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-processor-ingress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: NotIn
+        values: [api]
+  policyTypes:
+    - Ingress
+  ingress: []
+---
+# Restrict egress — only allow Redis, Postgres, DNS, and HTTPS (Alchemy RPC)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-egress
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Redis (6379)
+    - to: []
+      ports:
+        - port: 6379
+          protocol: TCP
+    # Postgres (5432)
+    - to: []
+      ports:
+        - port: 5432
+          protocol: TCP
+    # HTTPS outbound (Alchemy RPC, ECR pulls, Secrets Manager)
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
