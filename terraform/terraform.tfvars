@@ -33,14 +33,14 @@ rds_multi_az           = false
 rds_storage_size       = 20
 rds_max_storage        = 50
 rds_backup_retention   = 7
-rds_backup_window      = "03:00-04:00"
-rds_maintenance_window = "sun:04:00-sun:05:00"
+rds_backup_window      = "22:00-23:00"
+rds_maintenance_window = "wed:03:00-wed:04:00"
 
 # Redis
 redis_node_type          = "cache.t3.micro"
 redis_engine_version     = "7.1"
-redis_snapshot_window    = "04:00-05:00"
-redis_maintenance_window = "sun:05:00-sun:06:00"
+redis_snapshot_window    = "22:30-23:30"
+redis_maintenance_window = "wed:04:00-wed:05:00"
 
 # ECR
 ecr_tag_mutability = "IMMUTABLE"
