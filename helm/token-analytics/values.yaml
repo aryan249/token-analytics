@@ -1,6 +1,6 @@
 image:
-  repository: 207270671706.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
-  tag: "d571f0ad677ec2a29cf66f4c5f76f949e7447cf9"
+  repository: 692046684301.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
+  tag: "4e11cdb"
   # Update this tag from CI output, then merge to main/staging to deploy.
   pullPolicy: Always
 
@@ -9,7 +9,7 @@ namespace: token-analytics
 # ── External Secrets (pulled from AWS Secrets Manager) ────────────────────────
 externalSecrets:
   region: ap-south-1
-  roleArn: "arn:aws:iam::207270671706:role/token-analytics-external-secrets-role"
+  roleArn: "arn:aws:iam::692046684301:role/token-analytics-external-secrets-role"
   secretName: "token-analytics/app-secrets"
   # All keys from this secret are auto-extracted — no need to list them here.
   # Just add new keys to AWS Secrets Manager and pods will get them on next sync.

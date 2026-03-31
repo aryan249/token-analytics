@@ -1,0 +1,37 @@
+#!/bin/sh
+
+echo "Running pre-commit checks..."
+
+# TypeScript type check
+npx tsc --noEmit --skipLibCheck 2>&1 | grep -v "node_modules/" > /tmp/tsc-out.txt || true
+if grep -q "error TS" /tmp/tsc-out.txt; then
+  echo "❌ TypeScript errors found:"
+  cat /tmp/tsc-out.txt
+  exit 1
+fi
+echo "✓ TypeScript"
+
+# Unit tests
+npm test || exit 1
+echo "✓ Tests"
+
+# Terraform format (if tf files changed)
+if git diff --cached --name-only | grep -q "\.tf$"; then
+  if command -v terraform &>/dev/null; then
+    terraform fmt -check -recursive terraform/ || {
+      echo "❌ Run: terraform fmt -recursive terraform/"
+      exit 1
+    }
+    echo "✓ Terraform fmt"
+  fi
+fi
+
+# Helm lint (if helm files changed)
+if git diff --cached --name-only | grep -q "helm/"; then
+  if command -v helm &>/dev/null; then
+    helm lint helm/token-analytics/ || exit 1
+    echo "✓ Helm lint"
+  fi
+fi
+
+echo "All checks passed ✓"
