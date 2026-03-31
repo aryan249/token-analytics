@@ -2,8 +2,9 @@ name: CI/CD
 
 on:
   push:
-    branches: [main, staging, feat/*, fix/*]
-  # PR builds removed — only push triggers CI. PRs are validated by branch protection rules.
+    branches: [main, staging, feat/indexer-pipeline]
+  pull_request:
+    branches: [main, staging]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,7 +19,8 @@ env:
   NODE_VERSION: "20"
 
 jobs:
-  # ── Runs on EVERY push (all branches) ──────────────────────────────────────
+  # ── Runs on EVERY push AND every PR ────────────────────────────────────────
+  # Validates code quality on PRs before merge
   lint-build-test:
     runs-on: self-hosted
     steps:
@@ -48,12 +50,12 @@ jobs:
       - name: Dependency audit
         run: npm audit --audit-level=high || true
 
-  # ── Runs ONLY on merge to main or staging ──────────────────────────────────
-  # Tags: prod-<sha> or staging-<sha>
-  # Argo CD pulls latest prod-* or staging-* tag automatically
+  # ── Runs ONLY on merge to main or staging (NOT on PRs) ────────────────────
+  # Builds image, tags with environment prefix, pushes to ECR
+  # Image Updater detects new tag → Argo CD deploys
   docker-build-push:
     needs: lint-build-test
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/feat/indexer-pipeline'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/feat/indexer-pipeline')
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4.1.7
@@ -105,4 +107,15 @@ jobs:
           echo "**Tag:** \`$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** \`$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Argo CD will auto-deploy using the latest \`${{ steps.env-tag.outputs.ENV_PREFIX }}-*\` tag." >> $GITHUB_STEP_SUMMARY
+          echo "Argo CD Image Updater will auto-deploy this." >> $GITHUB_STEP_SUMMARY
+
+  # ── Flow ───────────────────────────────────────────────────────────────────
+  #
+  # PR created → lint + test + build (validate, no ECR push)
+  # PR merged to staging → lint + test + build + push staging-<sha> to ECR
+  #                        → Image Updater detects → Argo CD deploys to staging
+  # PR merged to main    → lint + test + build + push prod-<sha> to ECR
+  #                        → Image Updater detects → Argo CD deploys to production
+  #
+  # CI has: ECR push only (on merge)
+  # CI does NOT have: kubectl, helm, git push, EKS access
