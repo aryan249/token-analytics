@@ -50,7 +50,7 @@ resource "aws_elasticache_parameter_group" "redis" {
 
   parameter {
     name  = "appendfsync"
-    value = "everysec"   # fsync every second — max 1s data loss on crash, good perf
+    value = "everysec" # fsync every second — max 1s data loss on crash, good perf
   }
 
   tags = { Name = "${var.project}-redis-params" }

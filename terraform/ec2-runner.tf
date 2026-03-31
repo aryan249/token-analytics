@@ -54,14 +54,14 @@ resource "aws_instance" "runner" {
   }
 
   user_data = base64encode(templatefile("${path.module}/runner-init.sh", {
-    github_repo  = var.github_repo
-    runner_token = var.github_runner_token
-    runner_name  = "${var.project}-runner"
+    github_repo   = var.github_repo
+    runner_token  = var.github_runner_token
+    runner_name   = "${var.project}-runner"
     runner_labels = "self-hosted,linux,x64"
   }))
 
   # Auto-recover if instance fails hardware check
-  monitoring = true  # detailed CloudWatch monitoring (1-min intervals)
+  monitoring = true # detailed CloudWatch monitoring (1-min intervals)
 
   tags = { Name = "${var.project}-github-runner" }
 }
