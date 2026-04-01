@@ -1,4 +1,5 @@
-# CI runner RBAC — strictly read-only. Cannot deploy, patch, or modify anything.
+# CI runner RBAC — only created in production namespace (prevents conflict with staging)
+{{- if eq .Values.namespace "token-analytics" }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -27,3 +28,4 @@ rules:
   - apiGroups: ["argoproj.io"]
     resources: ["applications"]
     verbs: ["get", "list"]
+{{- end }}
