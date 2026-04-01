@@ -1,6 +1,6 @@
 image:
   repository: 692046684301.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
-  tag: "4e11cdb"
+  tag: "prod-a4f551f5e1bb49360278dffa8e2c8faa239947a3"
   # Update this tag from CI output, then merge to main/staging to deploy.
   pullPolicy: Always
 
