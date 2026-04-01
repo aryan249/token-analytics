@@ -1,7 +1,8 @@
 image:
   repository: 692046684301.dkr.ecr.ap-south-1.amazonaws.com/token-analytics
-  tag: "4e11cdb"
-  # Update this tag from CI output, then merge to main/staging to deploy.
+  tag: "latest"
+  # Image Updater overrides this at runtime with prod-<sha> or staging-<sha>.
+  # This is only a fallback for first deploy. Do not hardcode SHA here.
   pullPolicy: Always
 
 namespace: token-analytics
