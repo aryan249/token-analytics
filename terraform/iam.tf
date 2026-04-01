@@ -112,6 +112,113 @@ resource "aws_iam_role_policy" "github_actions_ecr" {
   })
 }
 
+# ── GitHub Actions Terraform Role (OIDC) ────────────────────────────────────
+# Separate from CI role — this one has broad infra permissions for terraform.
+# CI role can only push to ECR. Terraform role can manage all infrastructure.
+
+resource "aws_iam_role" "github_terraform" {
+  name = "${var.project}-github-terraform-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.github.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*"
+        }
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "github_terraform" {
+  name = "terraform-infra"
+  role = aws_iam_role.github_terraform.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "TerraformState"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket",
+        ]
+        Resource = [
+          "arn:aws:s3:::token-analytics-tfstate-${data.aws_caller_identity.current.account_id}",
+          "arn:aws:s3:::token-analytics-tfstate-${data.aws_caller_identity.current.account_id}/*",
+        ]
+      },
+      {
+        Sid      = "TerraformLocks"
+        Effect   = "Allow"
+        Action   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"]
+        Resource = "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/terraform-locks"
+      },
+      {
+        Sid      = "VPC"
+        Effect   = "Allow"
+        Action   = ["ec2:*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "EKS"
+        Effect   = "Allow"
+        Action   = ["eks:*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "RDS"
+        Effect   = "Allow"
+        Action   = ["rds:*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "ElastiCache"
+        Effect   = "Allow"
+        Action   = ["elasticache:*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "SecretsManager"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "IAM"
+        Effect   = "Allow"
+        Action   = ["iam:*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "ECR"
+        Effect   = "Allow"
+        Action   = ["ecr:*"]
+        Resource = "*"
+      },
+      {
+        Sid      = "CloudWatch"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:*", "logs:*", "sns:*"]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+output "github_terraform_role_arn" {
+  value = aws_iam_role.github_terraform.arn
+}
+
 # ── GitHub Runner EC2 Role ────────────────────────────────────────────────────
 
 resource "aws_iam_role" "runner" {
