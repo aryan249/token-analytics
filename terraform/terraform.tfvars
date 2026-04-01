@@ -55,6 +55,9 @@ runner_disk_alert_threshold = 85
 # GitHub
 github_repo = "aryan249/token-analytics"
 
+# Staging (separate RDS + Redis)
+staging_enabled = true
+
 # Ports
 eks_api_port  = 443
 redis_port    = 6379
